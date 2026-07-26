@@ -1,0 +1,30 @@
+name: Update flake.lock
+
+on:
+  schedule:
+    - cron: "0 4 * * 1" # 04:00 UTC every Monday
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: flake-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update flake inputs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/nix-setup
+
+      - name: Update flake.lock
+        uses: DeterminateSystems/update-flake-lock@834c491b2ece4de0bbd00d85214bb5e83b4da5c6 # v28
+        with:
+          pr-title: "chore: update flake.lock"
+          commit-msg: "chore: update flake.lock"
