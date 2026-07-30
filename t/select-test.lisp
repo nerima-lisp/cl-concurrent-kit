@@ -2,14 +2,17 @@
 (in-package #:cl-concurrent-kit/test)
 
 (describe "select"
-  (it "chooses a RECV clause whose channel already has a value"
+  (it "chooses the first ready RECV clause in source order"
     (let ((empty (make-channel :buffer-size 1))
-          (ready (make-channel :buffer-size 1)))
-      (send ready :from-ready)
+          (first-ready (make-channel :buffer-size 1))
+          (second-ready (make-channel :buffer-size 1)))
+      (send first-ready :from-first)
+      (send second-ready :from-second)
       (expect (select
                 ((recv empty) (v) (list :empty v))
-                ((recv ready) (v) (list :ready v)))
-              :to-equal '(:ready :from-ready))))
+                ((recv first-ready) (v) (list :first v))
+                ((recv second-ready) (v) (list :second v)))
+              :to-equal (list :first :from-first))))
 
   (it "runs :DEFAULT immediately when nothing is ready"
     (let ((channel (make-channel :buffer-size 1)))
@@ -30,6 +33,13 @@
                 ((recv channel) (v) (list :recv v))
                 (:timeout 0.05 () :gave-up))
               :to-be :gave-up)))
+
+  (it "runs :TIMEOUT without waiting when its deadline has already expired"
+    (let ((channel (make-channel :buffer-size 1)))
+      (expect (select
+                ((recv channel) (v) (list :recv v))
+                (:timeout 0 () :expired))
+              :to-be :expired)))
 
   (it "can select on a SEND clause"
     (let* ((channel (make-channel))

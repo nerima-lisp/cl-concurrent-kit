@@ -13,7 +13,9 @@
 
 (defstruct (task-scope (:constructor %make-task-scope ()))
   (lock (make-lock :name "cl-concurrent-kit scope") :read-only t)
-  (children nil)
+  ;; Active child records, keyed by the child object itself.  Completed
+  ;; children remove themselves so their cancellation closures are not retained.
+  (children (make-hash-table :test (function eq)) :read-only t)
   (cancelled-p nil)
   ;; Conditions signaled by failed children, oldest first (reversed on read).
   (failures nil))
@@ -27,40 +29,75 @@ early is safe."
     (error 'task-cancelled :scope scope)))
 
 (defun %scope-cancel (scope)
-  (with-lock-held ((task-scope-lock scope))
-    (setf (task-scope-cancelled-p scope) t)))
+  "Mark SCOPE cancelled and request cancellation of its active children."
+  (let ((cancellers nil))
+    (with-lock-held ((task-scope-lock scope))
+      (unless (task-scope-cancelled-p scope)
+        (setf (task-scope-cancelled-p scope) t
+              cancellers
+              (loop for child being the hash-keys of (task-scope-children scope)
+                    for cancel = (%scope-child-cancel child)
+                    when cancel collect cancel))))
+    (dolist (cancel cancellers)
+      (funcall cancel))))
 
 (defun %scope-record-failure (scope condition)
   (with-lock-held ((task-scope-lock scope))
     (push condition (task-scope-failures scope))))
 
-(defun spawn (scope function)
-  "Start FUNCTION on a new thread tracked by SCOPE and return a PROMISE for
-its outcome. If FUNCTION signals an error, every other task in SCOPE has its
-next CHECK-CANCELLED trip, and -- once WITH-TASK-SCOPE's body has returned
-and every task has finished -- that error resurfaces wrapped in a
-SCOPE-ERROR."
-  (let ((promise (make-promise))
-        (thread nil))
-    (setf thread
+(defun spawn (scope function &key executor)
+  "Start FUNCTION as a child of SCOPE and return its promise.
+
+When EXECUTOR is supplied, queue the child on that executor.  The optional
+executor is intentionally accepted here rather than by WITH-TASK-SCOPE so one
+scope can coordinate children with different execution policies."
+  (let* ((promise (make-promise))
+         (completion (make-promise))
+         (child (%make-scope-child completion)))
+    (%scope-add-child scope child)
+    (if executor
+        (handler-case
+            (multiple-value-bind (submitted-promise task)
+                (%submit executor
+                         (lambda () (%scope-run-child scope child function))
+                         :promise promise
+                         :on-cancel
+                         (lambda (condition)
+                           (unwind-protect
+                                (unless (typep condition (quote task-cancelled))
+                                  (%scope-record-failure scope condition)
+                                  (%scope-cancel scope))
+                             (deliver completion t)
+                             (%scope-remove-child scope child))))
+              (%scope-set-child-cancel
+               scope child
+               (lambda ()
+                 (%executor-task-cancel
+                  task
+                  (make-condition (quote task-cancelled) :scope scope))))
+              submitted-promise)
+          (error (condition)
+            (%scope-remove-child scope child)
+            (error condition)))
+        (progn
           (make-thread
            (lambda ()
-             (handler-case (deliver promise (funcall function))
-               (error (c)
-                 (deliver-error promise c)
-                 (%scope-record-failure scope c)
-                 (%scope-cancel scope))))
-           :name "cl-concurrent-kit scope task"))
-    (with-lock-held ((task-scope-lock scope))
-      (push thread (task-scope-children scope)))
-    promise))
+             (handler-case
+                 (deliver promise (%scope-run-child scope child function))
+               (error (condition)
+                 (deliver-error promise condition))))
+           :name "cl-concurrent-kit scope task")
+          promise))))
 
 (defun %scope-await-children (scope)
-  (dolist (thread (with-lock-held ((task-scope-lock scope)) (task-scope-children scope)))
-    ;; JOIN-THREAD alone -- not a separate pending-count -- is the wait: it
-    ;; already blocks until the child's UNWIND-PROTECT-wrapped handler-case
-    ;; above has fully run.
-    (join-thread thread)))
+  (let ((children nil))
+    (with-lock-held ((task-scope-lock scope))
+      (maphash (lambda (child present-p)
+                 (declare (ignore present-p))
+                 (push child children))
+               (task-scope-children scope)))
+    (dolist (child children)
+      (await (%scope-child-completion child)))))
 
 (defun %scope-signal-failures (scope)
   (let ((failures (with-lock-held ((task-scope-lock scope)) (reverse (task-scope-failures scope)))))
@@ -96,3 +133,41 @@ after every child has been cancelled and awaited; if BODY returns normally
 but one or more children failed, WITH-TASK-SCOPE signals SCOPE-ERROR once
 they have all finished."
   `(%call-with-task-scope (lambda (,scope-var) ,@body)))
+
+(defstruct (%scope-child (:constructor %make-scope-child (completion)))
+  (completion nil :read-only t)
+  (cancel nil))
+
+(defun %scope-add-child (scope child)
+  (let ((cancel nil))
+    (with-lock-held ((task-scope-lock scope))
+      (setf (gethash child (task-scope-children scope)) t)
+      (when (task-scope-cancelled-p scope)
+        (setf cancel (%scope-child-cancel child))))
+    (when cancel
+      (funcall cancel))))
+
+(defun %scope-remove-child (scope child)
+  (with-lock-held ((task-scope-lock scope))
+    (remhash child (task-scope-children scope))))
+
+(defun %scope-set-child-cancel (scope child cancel)
+  (let ((cancel-now nil))
+    (with-lock-held ((task-scope-lock scope))
+      (setf (%scope-child-cancel child) cancel)
+      (when (and (gethash child (task-scope-children scope))
+                 (task-scope-cancelled-p scope))
+        (setf cancel-now cancel)))
+    (when cancel-now
+      (funcall cancel-now))))
+
+(defun %scope-run-child (scope child function)
+  (unwind-protect
+       (handler-case
+           (funcall function)
+         (error (condition)
+           (%scope-record-failure scope condition)
+           (%scope-cancel scope)
+           (error condition)))
+    (deliver (%scope-child-completion child) t)
+    (%scope-remove-child scope child)))

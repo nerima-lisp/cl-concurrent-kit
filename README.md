@@ -49,6 +49,7 @@ than follow the default branch.
 ```sh
 nix develop          # SBCL with CL_SOURCE_REGISTRY already set
 nix run .#test       # run the test suite
+nix run .#coverage   # write HTML and LCOV coverage reports to ./coverage
 nix flake check      # tests + formatting + docs, the same gate CI uses
 nix fmt              # format Nix sources (treefmt)
 ```

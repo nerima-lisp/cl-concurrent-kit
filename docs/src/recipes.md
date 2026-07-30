@@ -52,6 +52,25 @@ input channel and writes to an output channel it owns.
         (cl-concurrent-kit:send out (funcall transform value))))))
 ```
 
+## Waiting for every result, failures included
+
+`AWAIT` re-signals a failed promise's condition, so gathering several
+promises with a plain `MAPCAR` over `AWAIT` aborts on the first failure.
+`PROMISE-ALL-SETTLED` instead waits for every input to settle and hands back
+one `PROMISE-SETTLEMENT` per input, in order, regardless of outcome:
+
+```lisp
+(let ((settlements (cl-concurrent-kit:await
+                     (cl-concurrent-kit:promise-all-settled
+                      (mapcar (lambda (url) (cl-concurrent-kit:future (fetch url)))
+                              urls)))))
+  (loop for settlement in settlements
+        for url in urls
+        do (ecase (cl-concurrent-kit:promise-settlement-state settlement)
+             (:fulfilled (record-success url (cl-concurrent-kit:promise-settlement-value settlement)))
+             (:failed (record-failure url (cl-concurrent-kit:promise-settlement-condition settlement))))))
+```
+
 ## Cooperative cancellation inside a scope
 
 `CHECK-CANCELLED` only does anything at the point it is called, so call it

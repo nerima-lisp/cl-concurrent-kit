@@ -68,3 +68,17 @@
         (declare (ignore value))
         (expect ok-p :to-be nil)
         (expect closed-p :to-be-truthy)))))
+
+(describe "channel SELECT waiter registration"
+  (it "deduplicates repeated registration of the same SELECT waiter"
+    (let ((channel (make-channel))
+          (waiter (make-semaphore)))
+      (cl-concurrent-kit::%channel-add-waiter channel waiter)
+      (cl-concurrent-kit::%channel-add-waiter channel waiter)
+      (expect (hash-table-count
+               (cl-concurrent-kit::channel-waiters channel))
+              :to-be 1)
+      (cl-concurrent-kit::%channel-remove-waiter channel waiter)
+      (expect (hash-table-count
+               (cl-concurrent-kit::channel-waiters channel))
+              :to-be 0))))

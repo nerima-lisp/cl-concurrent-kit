@@ -156,6 +156,17 @@
               exec timeout 120 sbcl --script ${self}/run-tests.lisp
             '';
           };
+          coverage = pkgs.writeShellApplication {
+            name = "cl-concurrent-kit-coverage";
+            runtimeInputs = [
+              pkgs.sbcl
+              pkgs.coreutils
+            ];
+            text = ''
+              export CL_SOURCE_REGISTRY="${sourceRegistry}"
+              exec timeout 120 sbcl --script ${self}/run-coverage.lisp "$@"
+            '';
+          };
         in
         {
           default = {
@@ -165,6 +176,10 @@
           test = {
             type = "app";
             program = "${test}/bin/cl-concurrent-kit-test";
+          };
+          coverage = {
+            type = "app";
+            program = "${coverage}/bin/cl-concurrent-kit-coverage";
           };
         }
       );

@@ -36,6 +36,28 @@
       (expect (await promise) :to-be :from-thread)
       (join-thread thread))))
 
+(describe "promise-all-settled"
+  (it "settles immediately with an empty list for no input promises"
+    (let ((aggregate (cl-concurrent-kit:promise-all-settled nil)))
+      (expect (promise-settled-p aggregate) :to-be-truthy)
+      (expect (await aggregate) :to-equal nil)))
+
+  (it "preserves input order and records fulfilled and failed outcomes"
+    (let* ((fulfilled (make-promise))
+           (failed (make-promise))
+           (condition (make-condition 'error))
+           (aggregate (cl-concurrent-kit:promise-all-settled
+                       (list fulfilled failed))))
+      (deliver-error failed condition)
+      (deliver fulfilled :value)
+      (let ((settlements (await aggregate :timeout 1)))
+        (expect (mapcar #'cl-concurrent-kit:promise-settlement-state settlements)
+                :to-equal (list :fulfilled :failed))
+        (expect (cl-concurrent-kit:promise-settlement-value (first settlements))
+                :to-be :value)
+          (expect (cl-concurrent-kit:promise-settlement-condition (second settlements))
+                :to-be condition)))))
+
 (describe "future"
   (it "runs its body on another thread and AWAIT resolves to its value"
     (expect (await (future (+ 1 2 3))) :to-be 6))

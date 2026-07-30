@@ -45,6 +45,10 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `DELIVER-ERROR` `(promise condition)` | Settle as failed. |
 | `AWAIT` `(promise &key timeout)` | Block for the settled value, or re-signal its condition. |
 | `FUTURE` `(&body body)` | Macro: spawn `body` on a thread, return its `PROMISE` immediately. |
+| `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records. Never fails, even if some inputs do. |
+| `PROMISE-SETTLEMENT-STATE` `(settlement)` | `:FULFILLED` or `:FAILED`. |
+| `PROMISE-SETTLEMENT-VALUE` `(settlement)` | Meaningful when `:FULFILLED`. |
+| `PROMISE-SETTLEMENT-CONDITION` `(settlement)` | Meaningful when `:FAILED`. |
 
 ## Channels
 
@@ -72,14 +76,14 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `MAKE-EXECUTOR` `(&key size name)` | A fixed-size worker pool. |
 | `EXECUTOR-P` `(x)` | Type predicate. |
 | `SUBMIT` `(executor thunk)` | Queue `thunk`, return a `PROMISE`. |
-| `SHUTDOWN-EXECUTOR` `(executor &key wait)` | Stop accepting new work. |
+| `SHUTDOWN-EXECUTOR` `(executor &key wait cancel-pending)` | Stop accepting new work. `CANCEL-PENDING` rejects tasks still queued instead of running them; `WAIT` blocks until every worker thread has exited. |
 
 ## Structured concurrency
 
 | Symbol | Description |
 |---|---|
 | `WITH-TASK-SCOPE` `((scope-var) &body body)` | Macro: a nursery for `SPAWN`ed tasks. |
-| `SPAWN` `(scope function)` | Start a tracked child task, return its `PROMISE`. |
+| `SPAWN` `(scope function &key executor)` | Start a tracked child task, return its `PROMISE`. With `EXECUTOR`, the child runs on that executor's worker pool instead of a dedicated thread. |
 | `CHECK-CANCELLED` `(scope)` | Signal `TASK-CANCELLED` if `scope` has been cancelled. |
 
 ## Conditions

@@ -53,14 +53,6 @@ clause's body returns."
             runtime-clause-forms)))))
     `(%run-select (list ,@(nreverse runtime-clause-forms)) ,default-thunk-form ,timeout-form)))
 
-(defun %shuffled (list)
-  "A fresh, randomly permuted copy of LIST (Fisher-Yates), so a SELECT with
-several ready clauses does not always favor whichever was written first."
-  (let ((vector (coerce list 'vector)))
-    (loop for i from (1- (length vector)) downto 1
-          do (rotatef (aref vector i) (aref vector (random (1+ i)))))
-    (coerce vector 'list)))
-
 (defun %try-clause (clause)
   "Attempt CLAUSE's operation without blocking. Returns a thunk to call for
 its result if it succeeded, or NIL if it would have blocked."
@@ -87,7 +79,7 @@ one of DEFAULT-THUNK and TIMEOUT is non-NIL; the macro enforces that."
           (dolist (clause clauses)
             (%channel-add-waiter (getf clause :channel) waiter))
           (loop
-            (dolist (clause (%shuffled clauses))
+            (dolist (clause clauses)
               (let ((winner (%try-clause clause)))
                 (when winner (return-from %run-select (funcall winner)))))
             (cond

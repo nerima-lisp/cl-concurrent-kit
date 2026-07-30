@@ -14,7 +14,18 @@
   ;; Never transitions once settled; see PROMISE-ALREADY-FULFILLED.
   (state :pending)
   (value nil)
-  (failure nil))
+  (failure nil)
+  ;; Observers are called after settlement has released LOCK.
+  (observers nil))
+
+(defstruct (promise-settlement
+    (:constructor %make-promise-settlement (state value condition))) "The outcome of one input to PROMISE-ALL-SETTLED.
+
+STATE is either :FULFILLED or :FAILED.  VALUE is meaningful for fulfilled
+settlements, and CONDITION is meaningful for failed settlements."
+  (state :fulfilled :read-only t)
+  (value nil :read-only t)
+  (condition nil :read-only t))
 
 (defun make-promise ()
   "Create a PROMISE with no value yet. Settle it with DELIVER or
@@ -23,19 +34,45 @@ DELIVER-ERROR; read it with AWAIT."
 
 (defun promise-settled-p (promise)
   "True once PROMISE has been settled by DELIVER or DELIVER-ERROR."
-  (with-lock-held ((promise-lock promise))
+  (with-lock-held
+    ((promise-lock promise))
     (not (eq (promise-state promise) :pending))))
 
 (defun %settle (promise state value)
-  (with-lock-held ((promise-lock promise))
-    (unless (eq (promise-state promise) :pending)
-      (error 'promise-already-fulfilled :promise promise))
-    (setf (promise-state promise) state)
-    (ecase state
-      (:fulfilled (setf (promise-value promise) value))
-      (:failed (setf (promise-failure promise) value)))
-    (condition-broadcast (promise-condition-variable promise)))
+  (let (observers)
+    (with-lock-held
+      ((promise-lock promise))
+      (unless (eq (promise-state promise) :pending)
+        (error 'promise-already-fulfilled :promise promise))
+      (setf (promise-state promise) state
+            observers (nreverse (promise-observers promise))
+            (promise-observers promise) nil)
+      (ecase state
+        (:fulfilled
+          (setf (promise-value promise) value))
+        (:failed
+          (setf (promise-failure promise) value)))
+      (condition-broadcast (promise-condition-variable promise)))
+    (dolist (observer observers)
+      (funcall observer state value)))
   promise)
+
+(defun %observe-promise (promise observer)
+  "Call OBSERVER with PROMISE's state and outcome after it settles.
+
+This private helper ensures observers registered concurrently with settlement
+are either retained for notification or called after the settled state is read."
+  (let (state
+        outcome)
+    (with-lock-held
+      ((promise-lock promise))
+      (if (eq (promise-state promise) :pending) (push observer (promise-observers promise))
+        (setf state (promise-state promise)
+              outcome (ecase state
+            (:fulfilled (promise-value promise))
+            (:failed (promise-failure promise))))))
+    (when state
+      (funcall observer state outcome))))
 
 (defun deliver (promise value)
   "Settle PROMISE successfully with VALUE. Signals PROMISE-ALREADY-FULFILLED
@@ -52,27 +89,67 @@ settled."
   "Block until PROMISE is settled, then return the value DELIVER was called
 with, or re-signal the condition DELIVER-ERROR was called with. With TIMEOUT
 (seconds), signals OPERATION-TIMED-OUT if PROMISE is not settled in time."
-  (with-lock-held ((promise-lock promise))
-    (let ((result (%wait-until (promise-condition-variable promise)
-                                (promise-lock promise)
-                                (lambda () (not (eq (promise-state promise) :pending)))
-                                (%deadline-from-timeout timeout))))
+  (with-lock-held
+    ((promise-lock promise))
+    (let ((result
+          (%wait-until
+            (promise-condition-variable promise)
+            (promise-lock promise)
+            (lambda ()
+              (not (eq (promise-state promise) :pending)))
+            (%deadline-from-timeout timeout))))
       (when (eq result :timeout)
         (error 'operation-timed-out :operation :await :timeout timeout))
       (ecase (promise-state promise)
         (:fulfilled (promise-value promise))
         (:failed (error (promise-failure promise)))))))
 
+(defun promise-all-settled (promises)
+  "Return a PROMISE fulfilled after every PROMISE in PROMISES settles.
+
+Its value is a list of PROMISE-SETTLEMENT records in the same order as
+PROMISES.  Failed inputs produce :FAILED records instead of failing the
+aggregate promise."
+  (let* ((promises (coerce promises 'list))
+         (count (length promises))
+         (aggregate (make-promise)))
+    (dolist (promise promises)
+      (check-type promise promise))
+    (if (zerop count) (deliver aggregate nil)
+      (let ((lock (make-lock :name "cl-concurrent-kit promise all settled"))
+            (remaining count)
+            (settlements (make-array count)))
+        (loop for promise in promises
+              for index from 0
+              do (%observe-promise
+            promise
+            (lambda (state outcome)
+              (let (complete)
+                (with-lock-held
+                  (lock)
+                  (setf (aref settlements index) (ecase state
+                      (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
+                      (:failed (%make-promise-settlement :failed nil outcome))))
+                  (setf complete (zerop (decf remaining))))
+                (when complete
+                  (deliver aggregate (coerce settlements 'list)))))))))
+    aggregate))
+
 (defmacro future (&body body)
   "Run BODY on a new thread and return a PROMISE for its outcome immediately.
 AWAIT on the result blocks until BODY finishes and returns its value, or
 re-signals whatever condition BODY let escape."
-  `(%future (lambda () ,@body)))
+  `(%future
+    (lambda ()
+      ,@body)))
 
 (defun %future (thunk)
   (let ((promise (make-promise)))
-    (make-thread (lambda ()
-                   (handler-case (deliver promise (funcall thunk))
-                     (error (c) (deliver-error promise c))))
-                 :name "cl-concurrent-kit future")
+    (make-thread
+      (lambda ()
+        (handler-case (deliver promise (funcall thunk))
+          (error (c)
+            (deliver-error promise c))))
+      :name
+      "cl-concurrent-kit future")
     promise))

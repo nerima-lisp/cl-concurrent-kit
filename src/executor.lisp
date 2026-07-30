@@ -33,10 +33,7 @@
         (values nil nil)
         (values (fifo-pop (%work-queue-fifo queue)) t))))
 
-(defun %work-queue-close (queue)
-  (with-lock-held ((%work-queue-lock queue))
-    (setf (%work-queue-closed-p queue) t)
-    (condition-broadcast (%work-queue-condition-variable queue))))
+
 
 ;;; Executor
 
@@ -48,7 +45,25 @@
   (loop
     (multiple-value-bind (task more-p) (%work-queue-pop queue)
       (unless more-p (return))
-      (funcall task))))
+      (%executor-task-run task))))
+
+
+
+(defun submit (executor thunk)
+  "Queue THUNK to run on one of EXECUTOR's worker threads and return a
+PROMISE for its outcome. AWAIT on the result blocks until THUNK runs and
+returns its value, or re-signals whatever condition THUNK let escape."
+  (%submit executor thunk))
+
+(defun shutdown-executor (executor &key wait cancel-pending)
+  "Stop EXECUTOR from accepting new work. With CANCEL-PENDING true, reject
+queued tasks without running them. When WAIT is true, block until every worker
+thread has exited."
+  (%work-queue-close (executor-queue executor) cancel-pending)
+  (when wait
+    (dolist (thread (executor-threads executor))
+      (join-thread thread)))
+  (values))
 
 (defun make-executor (&key (size 4) (name "cl-concurrent-kit executor"))
   "Create an executor backed by SIZE worker threads sharing one task queue.
@@ -60,24 +75,56 @@ will be submitted so the workers can exit."
      queue
      (loop repeat size
            collect (make-thread (lambda () (%worker-loop queue))
-                                 :name name)))))
+                                :name name)))))
 
-(defun submit (executor thunk)
-  "Queue THUNK to run on one of EXECUTOR's worker threads and return a
-PROMISE for its outcome. AWAIT on the result blocks until THUNK runs and
-returns its value, or re-signals whatever condition THUNK let escape."
-  (let ((promise (make-promise)))
-    (%work-queue-push (executor-queue executor)
-                       (lambda ()
-                         (handler-case (deliver promise (funcall thunk))
-                           (error (c) (deliver-error promise c)))))
-    promise))
+(defstruct (%executor-task (:constructor %make-executor-task (thunk promise on-cancel)))
+  (lock (make-lock :name "cl-concurrent-kit executor task") :read-only t)
+  (state :pending)
+  (thunk nil :read-only t)
+  (promise nil :read-only t)
+  (on-cancel nil :read-only t))
 
-(defun shutdown-executor (executor &key wait)
-  "Stop EXECUTOR from accepting new work; tasks already queued still run.
-When WAIT is true, block until every worker thread has exited."
-  (%work-queue-close (executor-queue executor))
-  (when wait
-    (dolist (thread (executor-threads executor))
-      (join-thread thread)))
-  (values))
+(defun %executor-task-run (task)
+  (let ((run-p nil))
+    (with-lock-held ((%executor-task-lock task))
+      (when (eq (%executor-task-state task) :pending)
+        (setf (%executor-task-state task) :running
+              run-p t)))
+    (when run-p
+      (handler-case (deliver (%executor-task-promise task)
+                             (funcall (%executor-task-thunk task)))
+        (error (condition)
+          (deliver-error (%executor-task-promise task) condition))))))
+
+(defun %executor-task-cancel (task condition)
+  (let ((cancel-p nil))
+    (with-lock-held ((%executor-task-lock task))
+      (when (eq (%executor-task-state task) :pending)
+        (setf (%executor-task-state task) :cancelled
+              cancel-p t)))
+    (when cancel-p
+      (deliver-error (%executor-task-promise task) condition)
+      (when (%executor-task-on-cancel task)
+        (funcall (%executor-task-on-cancel task) condition)))
+    cancel-p))
+
+(defun %submit (executor thunk &key promise on-cancel)
+  (let* ((promise (or promise (make-promise)))
+         (task (%make-executor-task thunk promise on-cancel)))
+    (%work-queue-push (executor-queue executor) task)
+    (values promise task)))
+
+(defun %work-queue-close (queue cancel-pending)
+  (let ((cancelled-tasks nil))
+    (with-lock-held ((%work-queue-lock queue))
+      (when cancel-pending
+        (loop until (fifo-empty-p (%work-queue-fifo queue))
+              do (push (fifo-pop (%work-queue-fifo queue)) cancelled-tasks)))
+      (setf (%work-queue-closed-p queue) t)
+      (condition-broadcast (%work-queue-condition-variable queue)))
+    (dolist (task cancelled-tasks)
+      (%executor-task-cancel
+       task
+       (make-condition 'simple-error
+                       :format-control "Executor shut down before task execution."
+                       :format-arguments nil)))))

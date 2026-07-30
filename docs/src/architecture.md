@@ -38,19 +38,21 @@ returning is therefore a real synchronization point between the two threads.
 ## SELECT sleeps; it does not poll
 
 Waiting on several heterogeneous channels at once is the classic hard part of
-implementing `select`: each channel has its own lock and condition variable,
-and there is no single condition variable to block on across all of them.
+implementing `select`: each channel has its own lock and its own send/recv
+condition variables, and there is no single condition variable to block on
+across all of them.
 
 `src/select.lisp` solves this without busy-waiting by registering a private
 semaphore as a temporary waiter on every channel involved
 (`%CHANNEL-ADD-WAITER`, `src/channel.lisp`). Every state change on a
 channel -- a value sent, received, or the channel closed -- signals that
-semaphore in addition to the channel's own condition variable
-(`%CHANNEL-NOTIFY`). `SELECT`'s loop tries every clause non-blockingly (via
-`TRY-SEND`/`TRY-RECV`, in a fresh random order each pass, for fairness), and
-only sleeps on its semaphore -- with a computed remaining timeout, if any --
-when nothing was ready. `UNWIND-PROTECT` guarantees the waiter is removed
-from every channel before `SELECT` returns, however it returns.
+semaphore in addition to the channel's own condition variables
+(`%CHANNEL-NOTIFY`/`%CHANNEL-BROADCAST`). `SELECT`'s loop tries every clause
+non-blockingly (via `TRY-SEND`/`TRY-RECV`, in source order, so the first
+clause written wins ties), and only sleeps on its semaphore -- with a
+computed remaining timeout, if any -- when nothing was ready.
+`UNWIND-PROTECT` guarantees the waiter is removed from every channel before
+`SELECT` returns, however it returns.
 
 ## Structured concurrency: why the body's own error is never wrapped
 

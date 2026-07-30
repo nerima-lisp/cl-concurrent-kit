@@ -82,3 +82,46 @@
                                           (lambda () (dotimes (_ 1000) (atomic-counter-decf counter)))))))
         (mapc #'join-thread down-threads))
       (expect (atomic-counter-value counter) :to-be 0))))
+
+(describe
+  "additional primitive behavior"
+  (it
+    "accepts JOIN-THREAD's supplied default for a normally completed thread"
+    (let ((thread (make-thread (lambda () :completed))))
+      (expect (join-thread thread :default :failed) :to-be :completed)))
+  (it
+    "uses MAKE-SEMAPHORE's initial count as immediately available permits"
+    (let ((semaphore (make-semaphore :count 2)))
+      (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
+      (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
+      (expect (wait-on-semaphore semaphore :timeout 0.01d0) :to-be nil)))
+  (it
+    "wakes every condition-variable waiter after CONDITION-BROADCAST"
+    (let* ((lock (make-lock))
+           (condition-variable (make-condition-variable))
+           (ready (make-semaphore))
+           (release-p nil)
+           (waiters
+             (loop repeat 2
+                   collect (make-thread
+                             (lambda ()
+                               (with-lock-held
+                                 (lock)
+                                 (signal-semaphore ready)
+                                 (loop until release-p
+                                       do (condition-wait condition-variable lock))
+                                 :released))))))
+      (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
+      (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
+      (with-lock-held
+        (lock)
+        (setf release-p t)
+        (condition-broadcast condition-variable))
+      (expect (mapcar (function join-thread) waiters)
+              :to-equal (list :released :released))))
+  (it
+    "applies explicit deltas in atomic counter operations"
+    (let ((counter (make-atomic-counter)))
+      (atomic-counter-incf counter 3)
+      (atomic-counter-decf counter 2)
+      (expect (atomic-counter-value counter) :to-be 1))))
