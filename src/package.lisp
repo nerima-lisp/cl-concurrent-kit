@@ -3,9 +3,9 @@
 ;;;; The single public package. Layers build on each other in the order they
 ;;;; are loaded (per cl-concurrent-kit.asd's :serial t): primitives wrap
 ;;;; sb-thread; fifo is a private queue shared by channel and executor;
-;;;; promises, channels, executors, and scopes (split into scope-state and
-;;;; scope) are built on primitives alone, not on each other, except where
-;;;; noted.
+;;;; promises (split into promise and promise-combinators), channels,
+;;;; executors, and scopes (split into scope-state and scope) are built on
+;;;; primitives alone, not on each other, except where noted.
 (defpackage #:cl-concurrent-kit
   (:use #:cl)
   (:export
@@ -51,6 +51,7 @@
    #:deliver-error
    #:await
    #:promise-then
+   #:promise-race
    #:future
 
    ;; Channels (CSP)

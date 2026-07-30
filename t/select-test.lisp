@@ -45,4 +45,11 @@
     (let* ((channel (make-channel))
            (consumer (future (recv channel))))
       (expect (select ((send channel :sent-via-select) () :sent)) :to-be :sent)
-      (expect (await consumer :timeout 1) :to-be :sent-via-select))))
+      (expect (await consumer :timeout 1) :to-be :sent-via-select)))
+  (it "does not choose an unready SEND clause; falls through to DEFAULT instead"
+    (let ((channel (make-channel :buffer-size 1)))
+      (send channel :occupies-the-only-slot)
+      (expect (select
+                ((send channel :blocked) () :sent)
+                (:default () :fell-through))
+              :to-be :fell-through))))

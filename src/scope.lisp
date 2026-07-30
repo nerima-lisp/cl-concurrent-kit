@@ -22,48 +22,54 @@ When EXECUTOR is supplied, queue the child on that executor.  The optional
 executor is intentionally accepted here rather than by WITH-TASK-SCOPE so one
 scope can coordinate children with different execution policies."
   (let ((promise (make-promise)))
-   (if (with-lock-held ((task-scope-lock scope)) (task-scope-cancelled-p scope))
+   (if (%with-scope-lock (scope) (task-scope-cancelled-p scope))
        (deliver-error promise (make-condition 'task-cancelled :scope scope))
        (spawn-child scope function executor promise))
    promise))
 
 (defun spawn-child (scope function executor promise)
+  "SPAWN's dispatch once SCOPE is known not to be cancelled yet: register a
+%SCOPE-CHILD for FUNCTION and hand it to %SPAWN-EXECUTOR-CHILD or
+%SPAWN-THREAD-CHILD depending on whether EXECUTOR was supplied."
   (let* ((completion (make-promise))
          (child (%make-scope-child completion)))
     (%scope-add-child scope child)
     (if executor
-        (handler-case
-            (multiple-value-bind (submitted-promise task)
-                (%submit executor
-                         (lambda () (%scope-run-child scope child function))
-                         :promise promise
-                         :on-cancel
-                         (lambda (condition)
-                           (unwind-protect
-                                (unless (typep condition (quote task-cancelled))
-                                  (%scope-record-failure scope condition)
-                                  (%scope-cancel scope))
-                             (deliver completion t)
-                             (%scope-remove-child scope child))))
-              (%scope-set-child-cancel
-               scope child
-               (lambda ()
-                 (%executor-task-cancel
-                  task
-                  (make-condition (quote task-cancelled) :scope scope))))
-              submitted-promise)
-          (error (condition)
-            (%scope-remove-child scope child)
-            (error condition)))
-        (progn
-          (make-thread
-           (lambda ()
-             (handler-case
-                 (deliver promise (%scope-run-child scope child function))
-               (error (condition)
-                 (deliver-error promise condition))))
-           :name "cl-concurrent-kit scope task")
-          promise))))
+        (%spawn-executor-child executor scope child function promise completion)
+        (%spawn-thread-child scope child function promise))))
+
+(defun %spawn-executor-child (executor scope child function promise completion)
+  "Queue FUNCTION on EXECUTOR and wire CHILD's cancellation to
+%EXECUTOR-TASK-CANCEL, so SCOPE cancelling CHILD reaches a task still sitting
+in EXECUTOR's queue exactly as it would a dedicated thread running
+CHECK-CANCELLED."
+  (handler-case
+      (multiple-value-bind (submitted-promise task)
+          (%submit executor
+                   (lambda () (%scope-run-child scope child function))
+                   :promise promise
+                   :on-cancel
+                   (lambda (condition)
+                     (unwind-protect
+                          (unless (typep condition 'task-cancelled)
+                            (%scope-record-failure scope condition)
+                            (%scope-cancel scope))
+                       (deliver completion t)
+                       (%scope-remove-child scope child))))
+        (%scope-set-child-cancel
+         scope child
+         (lambda ()
+           (%executor-task-cancel task (make-condition 'task-cancelled :scope scope))))
+        submitted-promise)
+    (error (condition)
+      (%scope-remove-child scope child)
+      (error condition))))
+
+(defun %spawn-thread-child (scope child function promise)
+  "Run FUNCTION on a dedicated thread, delivering its outcome to PROMISE."
+  (%deliver-on-thread promise
+                       (lambda () (%scope-run-child scope child function))
+                       :name "cl-concurrent-kit scope task"))
 
 (defun %scope-run-child (scope child function)
   (unwind-protect

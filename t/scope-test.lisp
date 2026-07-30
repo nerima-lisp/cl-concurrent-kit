@@ -84,8 +84,7 @@
                            (signal-semaphore cancelled)
                            (return :cancelled)))
                        (sleep 0.001))))
-            (unless (wait-on-semaphore started :timeout 1)
-              (error "scope child did not start"))
+            (wait-or-fail started "scope child did not start")
             (error "body boom"))
         (simple-error ()
           (setf body-error-observed-p t)))
@@ -113,10 +112,8 @@
                              (wait-on-semaphore second-release)
                              (error "second failure")))))
               (declare (ignore second))
-              (unless (wait-on-semaphore ready :timeout 1)
-                (error "first scope child did not start"))
-              (unless (wait-on-semaphore ready :timeout 1)
-                (error "second scope child did not start"))
+              (wait-or-fail ready "first scope child did not start")
+              (wait-or-fail ready "second scope child did not start")
               (setf controller
                     (future
                       (handler-case
@@ -139,8 +136,7 @@
                  (lambda ()
                    (signal-semaphore started)
                    (sleep 10)))
-          (unless (wait-on-semaphore started :timeout 1)
-            (error "scope child did not start"))))))
+          (wait-or-fail started "scope child did not start")))))
 
   (it "does not signal OPERATION-TIMED-OUT when every child finishes within :TIMEOUT"
     (expect (with-task-scope (scope :timeout 1)
@@ -162,10 +158,23 @@
                          (signal-semaphore cancelled)
                          (return :cancelled)))
                      (sleep 0.001))))
-          (unless (wait-on-semaphore started :timeout 1)
-            (error "cancellable sibling did not start"))
+          (wait-or-fail started "cancellable sibling did not start")
           (spawn scope (lambda () (error "sibling failure")))))
       (expect (wait-on-semaphore cancelled :timeout 1) :to-be-truthy))))
+
+(describe "with-task-scope executor children"
+  (it "runs a spawned child on the given executor to completion and delivers its result"
+    (let ((executor (make-executor :size 1)))
+      (unwind-protect
+          (expect (with-task-scope (scope)
+                    (await (spawn scope (lambda () (+ 20 22)) :executor executor) :timeout 1))
+                  :to-be 42)
+        (shutdown-executor executor :wait t))))
+
+  (it "removes the child registration and re-signals when submitting to EXECUTOR itself fails"
+    (with-task-scope (scope)
+      (signals error (spawn scope (lambda () :unreachable) :executor "not-an-executor"))
+      (expect (hash-table-count (cl-concurrent-kit::task-scope-children scope)) :to-be 0))))
 
 (describe "scope executor cancellation"
   (it "settles a queued child when executor shutdown removes it"
@@ -180,8 +189,7 @@
                     (lambda ()
                       (signal-semaphore started)
                       (wait-on-semaphore release)))
-            (unless (wait-on-semaphore started :timeout 1)
-              (error "executor worker did not start"))
+            (wait-or-fail started "executor worker did not start")
             (let ((scope-result
                     (future
                       (handler-case
@@ -189,11 +197,35 @@
                             (spawn scope (lambda () (setf ran-p t)) :executor executor)
                             (signal-semaphore queued))
                         (scope-error () :scope-failed)))))
-              (unless (wait-on-semaphore queued :timeout 1)
-                (error "scope child was not queued"))
+              (wait-or-fail queued "scope child was not queued")
               (shutdown-executor executor :cancel-pending t)
               (expect (await scope-result :timeout 1) :to-be :scope-failed)
               (expect ran-p :to-be nil)))
+        (signal-semaphore release)
+        (shutdown-executor executor :wait t))))
+  (it "cancels a still-queued executor child without re-recording its own cancellation as a failure"
+    (let ((executor (make-executor :size 1))
+          (occupied (make-semaphore))
+          (release (make-semaphore))
+          (queued (make-semaphore))
+          (ran-p nil)
+          (body-error-observed-p nil))
+      (unwind-protect
+          (progn
+            (submit executor
+                    (lambda ()
+                      (signal-semaphore occupied)
+                      (wait-on-semaphore release)))
+            (wait-or-fail occupied "executor worker did not start")
+            (handler-case
+                (with-task-scope (scope)
+                  (spawn scope (lambda () (setf ran-p t)) :executor executor)
+                  (signal-semaphore queued)
+                  (wait-or-fail queued "scope child was not queued")
+                  (error "body boom"))
+              (simple-error () (setf body-error-observed-p t)))
+            (expect body-error-observed-p :to-be-truthy)
+            (expect ran-p :to-be nil))
         (signal-semaphore release)
         (shutdown-executor executor :wait t)))))
 
@@ -222,4 +254,34 @@
       (cl-concurrent-kit::%scope-remove-child scope settled)
       (cl-concurrent-kit::%scope-cancel scope)
       (expect settled-cancellations :to-be 0)
-      (expect active-cancellations :to-be 1))))
+      (expect active-cancellations :to-be 1)))
+  (it "invokes a child's cancel immediately when added to an already-cancelled scope"
+    (let* ((scope (cl-concurrent-kit::%make-task-scope))
+           (cancellations 0)
+           (child (cl-concurrent-kit::%make-scope-child (make-promise))))
+      (cl-concurrent-kit::%scope-cancel scope)
+      (setf (cl-concurrent-kit::%scope-child-cancel child)
+            (lambda () (incf cancellations)))
+      (cl-concurrent-kit::%scope-add-child scope child)
+      (expect cancellations :to-be 1)))
+  (it "is idempotent when removed twice, and fires SET-CHILD-CANCEL immediately once already cancelled"
+    (let* ((scope (cl-concurrent-kit::%make-task-scope))
+           (child (cl-concurrent-kit::%make-scope-child (make-promise)))
+           (cancellations 0))
+      (cl-concurrent-kit::%scope-add-child scope child)
+      (cl-concurrent-kit::%scope-remove-child scope child)
+      (cl-concurrent-kit::%scope-remove-child scope child)
+      (expect (hash-table-count (cl-concurrent-kit::task-scope-children scope)) :to-be 0)
+      (cl-concurrent-kit::%scope-add-child scope child)
+      (cl-concurrent-kit::%scope-cancel scope)
+      (cl-concurrent-kit::%scope-set-child-cancel scope child (lambda () (incf cancellations)))
+      (expect cancellations :to-be 1)))
+  (it "does not fire SET-CHILD-CANCEL for a child no longer tracked by the scope"
+    (let* ((scope (cl-concurrent-kit::%make-task-scope))
+           (child (cl-concurrent-kit::%make-scope-child (make-promise)))
+           (cancellations 0))
+      (cl-concurrent-kit::%scope-add-child scope child)
+      (cl-concurrent-kit::%scope-remove-child scope child)
+      (cl-concurrent-kit::%scope-cancel scope)
+      (cl-concurrent-kit::%scope-set-child-cancel scope child (lambda () (incf cancellations)))
+      (expect cancellations :to-be 0))))

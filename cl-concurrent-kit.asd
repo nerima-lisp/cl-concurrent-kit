@@ -25,6 +25,7 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "primitives")
    (:file "fifo")
    (:file "promise")
+   (:file "promise-combinators")
    (:file "channel")
    (:file "select")
    (:file "executor")

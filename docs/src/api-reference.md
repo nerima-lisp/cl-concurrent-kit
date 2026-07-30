@@ -45,6 +45,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `DELIVER-ERROR` `(promise condition)` | Settle as failed. |
 | `AWAIT` `(promise &key timeout)` | Block for the settled value, or re-signal its condition. |
 | `PROMISE-THEN` `(promise on-fulfilled &optional on-rejected)` | Continuation-passing composition: register `on-fulfilled`/`on-rejected` and return a new `PROMISE` for whichever one runs, without blocking. See [Core concepts](concepts.md). |
+| `PROMISE-RACE` `(promises)` | A `PROMISE` that settles the same way as whichever of `promises` (non-empty) settles first, via the same continuation-passing composition as `PROMISE-THEN`. |
 | `FUTURE` `(&body body)` | Macro: spawn `body` on a thread, return its `PROMISE` immediately. |
 | `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records. Never fails, even if some inputs do. |
 | `PROMISE-SETTLEMENT-STATE` `(settlement)` | `:FULFILLED` or `:FAILED`. |

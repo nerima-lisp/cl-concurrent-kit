@@ -24,18 +24,22 @@
   (completion nil :read-only t)
   (cancel nil))
 
+(defmacro %with-scope-lock ((scope) &body body)
+  "Hold SCOPE's own lock for the dynamic extent of BODY."
+  `(with-lock-held ((task-scope-lock ,scope)) ,@body))
+
 (defun check-cancelled (scope)
   "Signal TASK-CANCELLED if SCOPE has been cancelled -- because a sibling
 task failed, because WITH-TASK-SCOPE's body exited abnormally, or because
 WITH-TASK-SCOPE has already returned. Call this periodically from within
 long-running SPAWNed work, at points where stopping early is safe."
-  (when (with-lock-held ((task-scope-lock scope)) (task-scope-cancelled-p scope))
+  (when (%with-scope-lock (scope) (task-scope-cancelled-p scope))
     (error 'task-cancelled :scope scope)))
 
 (defun %scope-cancel (scope)
   "Mark SCOPE cancelled and request cancellation of its active children."
   (let ((cancellers nil))
-    (with-lock-held ((task-scope-lock scope))
+    (%with-scope-lock (scope)
       (unless (task-scope-cancelled-p scope)
         (setf (task-scope-cancelled-p scope) t
               cancellers
@@ -46,12 +50,12 @@ long-running SPAWNed work, at points where stopping early is safe."
       (funcall cancel))))
 
 (defun %scope-record-failure (scope condition)
-  (with-lock-held ((task-scope-lock scope))
+  (%with-scope-lock (scope)
     (push condition (task-scope-failures scope))))
 
 (defun %scope-add-child (scope child)
   (let ((cancel nil))
-    (with-lock-held ((task-scope-lock scope))
+    (%with-scope-lock (scope)
       (setf (gethash child (task-scope-children scope)) t)
       (when (task-scope-cancelled-p scope)
         (setf cancel (%scope-child-cancel child))))
@@ -59,13 +63,13 @@ long-running SPAWNed work, at points where stopping early is safe."
       (funcall cancel))))
 
 (defun %scope-remove-child (scope child)
-  (with-lock-held ((task-scope-lock scope))
+  (%with-scope-lock (scope)
     (when (remhash child (task-scope-children scope))
       (condition-broadcast (task-scope-condition-variable scope)))))
 
 (defun %scope-set-child-cancel (scope child cancel)
   (let ((cancel-now nil))
-    (with-lock-held ((task-scope-lock scope))
+    (%with-scope-lock (scope)
       (setf (%scope-child-cancel child) cancel)
       (when (and (gethash child (task-scope-children scope))
                  (task-scope-cancelled-p scope))
@@ -78,13 +82,13 @@ long-running SPAWNed work, at points where stopping early is safe."
 OPERATION-TIMED-OUT after TIMEOUT seconds -- WITH-TASK-SCOPE's own :TIMEOUT.
 On a timeout, SCOPE's own cancellation (its caller's job, not this
 function's) is what stops the children this stopped waiting for."
-  (with-lock-held ((task-scope-lock scope))
+  (%with-scope-lock (scope)
     (%with-deadline-wait (done (task-scope-condition-variable scope) (task-scope-lock scope)
                           (lambda () (zerop (hash-table-count (task-scope-children scope))))
                           (%deadline-from-timeout timeout) timeout :with-task-scope)
       done)))
 
 (defun %scope-signal-failures (scope)
-  (let ((failures (with-lock-held ((task-scope-lock scope)) (reverse (task-scope-failures scope)))))
+  (let ((failures (%with-scope-lock (scope) (reverse (task-scope-failures scope)))))
     (when failures
       (error 'scope-error :causes failures))))

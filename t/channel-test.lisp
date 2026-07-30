@@ -36,7 +36,15 @@
       ((values (gen-list (gen-integer :min -1000 :max 1000) :min-length 0 :max-length 32)))
     (let ((channel (make-channel :buffer-size (max 1 (length values)))))
       (dolist (value values) (send channel value))
-      (expect (loop repeat (length values) collect (recv channel)) :to-equal values))))
+      (expect (loop repeat (length values) collect (recv channel)) :to-equal values)))
+  (it "blocks SEND once the buffer is full, then wakes it when RECV frees a slot"
+    (let* ((channel (make-channel :buffer-size 1)))
+      (send channel :first)
+      (let ((blocked-sender (future (send channel :second))))
+        (signals operation-timed-out (await blocked-sender :timeout 0.05d0))
+        (expect (recv channel) :to-be :first)
+        (expect (await blocked-sender :timeout 1) :to-be-truthy)
+        (expect (recv channel) :to-be :second)))))
 
 (describe "closing a channel"
   (it "lets RECV drain already-buffered values, then reports closed"
@@ -44,11 +52,13 @@
       (send channel :queued)
       (close-channel channel)
       (multiple-value-bind (value ok-p) (recv channel)
-        (expect value :to-be :queued)
-        (expect ok-p :to-be-truthy))
+        (with-soft-assertions
+          (expect value :to-be :queued)
+          (expect ok-p :to-be-truthy)))
       (multiple-value-bind (value ok-p) (recv channel)
-        (expect value :to-be nil)
-        (expect ok-p :to-be nil))))
+        (with-soft-assertions
+          (expect value :to-be nil)
+          (expect ok-p :to-be nil)))))
 
   (it "signals CHANNEL-CLOSED on SEND or TRY-SEND after close"
     (let ((channel (make-channel)))

@@ -64,8 +64,34 @@ Outside Nix, `sbcl --script run-coverage.lisp [output-dir]` writes the same
 HTML report plus an `lcov.info` next to it, for tooling that reads LCOV
 directly.
 
+Every runtime-reachable branch in `src/` is exercised by the test suite
+(`nix build .#coverage`'s branch column reads 100% file-by-file except
+`channel.lisp`, whose four uncovered branches are the `(INTEGER 0)` type
+declarations on `CHANNEL`'s `BUFFER-SIZE` and `COUNT` slots: `MAKE-CHANNEL`
+already `CHECK-TYPE`s `BUFFER-SIZE` before it ever reaches the slot, and
+`COUNT` is only ever set from arithmetic already known non-negative, so
+there is no test-reachable way to take the "value violates its declared
+type" side of either check). The *expression* column stays below 100% on
+every file for the same structural reason, not a testing gap: `sb-cover`
+instruments code as it runs, and each file's own `IN-PACKAGE` form, its
+`DEFSTRUCT` slot-default initializers, and any `DEFMACRO`'s body all run
+once at compile/macroexpansion time -- before `sb-cover` starts recording --
+so they show up as "not executed" no matter how many times their effect (a
+fully-covered `DEFINE-CONDITION`, a channel actually being locked) is
+exercised. `conditions.lisp` and `package.lisp` show this most starkly
+(52.5% and 0%: nearly everything in each is exactly this kind of
+compile-time form), but the same handful of points cost every other file a
+few percent too. Chasing 100% there would mean chasing the instrumentation,
+not the behavior.
+
 Tests live in `t/` and run under [cl-weave](https://github.com/nerima-lisp/cl-weave),
 the org's test framework.
+
+`nix develop -c sbcl --script benchmarks/run-benchmarks.lisp` reports each
+primitive's own round-trip overhead (channel send/recv, promise
+deliver/await, executor submit/await, scope spawn/await, ...) using
+cl-weave's `benchmark`, the same tool the org's other repositories use, so
+the numbers are directly comparable across them.
 
 ## Contributing
 

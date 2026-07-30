@@ -23,6 +23,10 @@
   ;; Semaphores registered by in-progress SELECT calls (src/select.lisp).
   (waiters (make-hash-table :test (function eq)) :read-only t))
 
+(defmacro %with-channel-lock ((channel) &body body)
+  "Hold CHANNEL's own lock for the dynamic extent of BODY."
+  `(with-lock-held ((channel-lock ,channel)) ,@body))
+
 (setf (documentation 'channel-closed-p 'function)
       "True once CLOSE-CHANNEL has been called on CHANNEL. A momentary,
 lock-free read -- like THREAD-ALIVE-P, treat it as advisory rather than
@@ -36,26 +40,29 @@ rendezvous channel: SEND blocks until a RECV takes the value. BUFFER-SIZE N >
   (%make-channel buffer-size))
 
 (defun %channel-add-waiter (channel semaphore)
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (setf (gethash semaphore (channel-waiters channel)) t)))
 
-(defun %channel-notify (channel condition-variable)
-  (condition-notify condition-variable)
+(defun %channel-signal-waiters (channel)
+  "Wake every SELECT call currently registered as a waiter on CHANNEL
+(%CHANNEL-ADD-WAITER), in addition to whichever of CHANNEL's own
+condition variables the caller notifies separately."
   (maphash (lambda (waiter present-p)
              (declare (ignore present-p))
              (signal-semaphore waiter))
            (channel-waiters channel)))
+
+(defun %channel-notify (channel condition-variable)
+  (condition-notify condition-variable)
+  (%channel-signal-waiters channel))
 
 (defun %channel-broadcast (channel)
   (condition-broadcast (channel-send-condition-variable channel))
   (condition-broadcast (channel-recv-condition-variable channel))
-  (maphash (lambda (waiter present-p)
-             (declare (ignore present-p))
-             (signal-semaphore waiter))
-           (channel-waiters channel)))
+  (%channel-signal-waiters channel))
 
 (defun %channel-remove-waiter (channel semaphore)
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (remhash semaphore (channel-waiters channel))))
 
 (defun send (channel value &key timeout)
@@ -63,7 +70,7 @@ rendezvous channel: SEND blocks until a RECV takes the value. BUFFER-SIZE N >
 RECV takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals
 OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED
 if CHANNEL is already closed."
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (let ((deadline (%deadline-from-timeout timeout))
           ;; An unbuffered channel is modeled as a single-slot buffer: SEND
           ;; may deposit a value whenever the slot is empty, exactly like a
@@ -99,7 +106,7 @@ if CHANNEL is already closed."
 is closed. Returns (VALUES VALUE T), or (VALUES NIL NIL) once CHANNEL is
 closed and every value sent before the close has been drained. With TIMEOUT
 (seconds), signals OPERATION-TIMED-OUT if neither happens in time."
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (%with-deadline-wait (ready (channel-recv-condition-variable channel) (channel-lock channel)
                           (lambda ()
                             (cond ((plusp (channel-count channel)) :ready)
@@ -119,21 +126,21 @@ available, else return NIL. Unlike SEND, does not wait for an unbuffered
 channel's value to actually be received -- that confirmation is exactly what
 blocking costs buy, and TRY-SEND trades it away for a non-blocking guarantee.
 Signals CHANNEL-CLOSED if CHANNEL is already closed."
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (when (channel-closed-p channel)
       (error 'channel-closed :channel channel))
     (when (< (channel-count channel) (max 1 (channel-buffer-size channel)))
-        (fifo-push (channel-queue channel) value)
-          (incf (channel-count channel))
-          (%channel-notify channel (channel-recv-condition-variable channel))
-          t)))
+      (fifo-push (channel-queue channel) value)
+      (incf (channel-count channel))
+      (%channel-notify channel (channel-recv-condition-variable channel))
+      t)))
 
 (defun try-recv (channel)
   "Non-blocking RECV. Returns (VALUES VALUE T NIL) if a value was
 immediately available, (VALUES NIL NIL T) if CHANNEL is closed and every
 buffered value has been drained, or (VALUES NIL NIL NIL) if nothing is
 available right now but CHANNEL may still produce more."
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (cond
       ((plusp (channel-count channel))
        (let ((value (fifo-pop (channel-queue channel))))
@@ -146,7 +153,7 @@ available right now but CHANNEL may still produce more."
 (defun close-channel (channel)
   "Close CHANNEL: further SEND or TRY-SEND calls signal CHANNEL-CLOSED, but
 RECV/TRY-RECV keep draining any values already queued. Idempotent."
-  (with-lock-held ((channel-lock channel))
+  (%with-channel-lock (channel)
     (setf (channel-closed-p channel) t)
     (%channel-broadcast channel))
   channel)

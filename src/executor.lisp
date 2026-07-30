@@ -18,15 +18,19 @@
   (fifo (make-fifo) :read-only t)
   (closed-p nil))
 
+(defmacro %with-work-queue-lock ((queue) &body body)
+  "Hold QUEUE's own lock for the dynamic extent of BODY."
+  `(with-lock-held ((%work-queue-lock ,queue)) ,@body))
+
 (defun %work-queue-push (queue task)
-  (with-lock-held ((%work-queue-lock queue))
+  (%with-work-queue-lock (queue)
     (fifo-push (%work-queue-fifo queue) task)
     (condition-notify (%work-queue-condition-variable queue))))
 
 (defun %work-queue-pop (queue)
   "Block until a task is available or QUEUE is closed and drained. Returns
 (VALUES TASK T) or (VALUES NIL NIL)."
-  (with-lock-held ((%work-queue-lock queue))
+  (%with-work-queue-lock (queue)
     (loop until (or (not (fifo-empty-p (%work-queue-fifo queue))) (%work-queue-closed-p queue))
           do (condition-wait (%work-queue-condition-variable queue) (%work-queue-lock queue)))
     (if (fifo-empty-p (%work-queue-fifo queue))
@@ -120,7 +124,7 @@ what a won and a lost race each do."
 
 (defun %work-queue-close (queue cancel-pending)
   (let ((cancelled-tasks nil))
-    (with-lock-held ((%work-queue-lock queue))
+    (%with-work-queue-lock (queue)
       (when cancel-pending
         (loop until (fifo-empty-p (%work-queue-fifo queue))
               do (push (fifo-pop (%work-queue-fifo queue)) cancelled-tasks)))
