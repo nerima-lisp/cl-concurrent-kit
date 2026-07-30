@@ -6,7 +6,7 @@
 ;;;; registered as a CHANNEL waiter (src/channel.lisp's %CHANNEL-ADD-WAITER),
 ;;;; so a SELECT with nothing ready sleeps instead of busy-polling and wakes
 ;;;; as soon as any one of its channels changes state.
-(progn (declaim (optimize (speed 3) (safety 1) (debug 0) (compilation-speed 0) #+sb-cover (sb-c:store-coverage-data 3))) (in-package #:cl-concurrent-kit))
+(in-package #:cl-concurrent-kit)
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (let (#+sbcl (sb-ext:*evaluator-mode* :interpret))
@@ -123,4 +123,23 @@
                          `(wait-on-semaphore ,waiter))))
              ,@removal-forms)))))))))
 
-(defmacro select (&body clauses) (%expand-select clauses))
+(defmacro select (&body clauses)
+  "Wait on multiple channel operations, running the body of whichever becomes
+ready first. Each clause is one of:
+
+  ((recv channel-form) (value-var) body...)
+  ((send channel-form value-form) () body...)
+  (:default () body...)
+  (:timeout seconds-form () body...)
+
+:DEFAULT, if present, runs immediately when no other clause is ready.
+:TIMEOUT, if present, runs if no other clause becomes ready within
+SECONDS-FORM. At most one of the two may appear. If neither appears, SELECT
+blocks until some clause is ready. SELECT returns whatever the chosen
+clause's body returns.
+
+Expanded entirely at compile time by %EXPAND-SELECT above: every clause's
+TRY-SEND/TRY-RECV probe is inlined directly into the loop body below, so a
+clause running is a direct call, not one more indirection through a stored
+handler thunk looked up by GETF at runtime."
+  (%expand-select clauses))

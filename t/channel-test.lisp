@@ -72,16 +72,20 @@
       (send channel :b)
       (expect (recv channel) :to-be :a)
       (expect (recv channel) :to-be :b)))
-  (it
-    "unblocks a full SEND after the oldest buffered value is received"
-    (let* ((channel (make-channel :buffer-size 1))
-           (sender nil))
+
+  (it-property "RECV returns every buffered value in the order it was SENT, for any batch"
+      ((values (gen-list (gen-integer :min -1000 :max 1000) :min-length 0 :max-length 32)))
+    (let ((channel (make-channel :buffer-size (max 1 (length values)))))
+      (dolist (value values) (send channel value))
+      (expect (loop repeat (length values) collect (recv channel)) :to-equal values)))
+  (it "blocks SEND once the buffer is full, then wakes it when RECV frees a slot"
+    (let* ((channel (make-channel :buffer-size 1)))
       (send channel :first)
-      (setf sender (future (send channel :second)))
-      (signals operation-timed-out (await sender :timeout 0.05d0))
-      (expect (recv channel) :to-be :first)
-      (expect (await sender :timeout 1) :to-be-truthy)
-      (expect (recv channel) :to-be :second)))
+      (let ((blocked-sender (future (send channel :second))))
+        (signals operation-timed-out (await blocked-sender :timeout 0.05d0))
+        (expect (recv channel) :to-be :first)
+        (expect (await blocked-sender :timeout 1) :to-be-truthy)
+        (expect (recv channel) :to-be :second))))
   (it
     "reports the SEND timeout while the buffered channel remains full"
     (let ((channel (make-channel :buffer-size 1)))
@@ -102,11 +106,13 @@
       (send channel :queued)
       (close-channel channel)
       (multiple-value-bind (value ok-p) (recv channel)
-        (expect value :to-be :queued)
-        (expect ok-p :to-be-truthy))
+        (with-soft-assertions
+          (expect value :to-be :queued)
+          (expect ok-p :to-be-truthy)))
       (multiple-value-bind (value ok-p) (recv channel)
-        (expect value :to-be nil)
-        (expect ok-p :to-be nil))))
+        (with-soft-assertions
+          (expect value :to-be nil)
+          (expect ok-p :to-be nil)))))
   (it
     "wakes blocked senders and receivers"
     (let* ((send-channel (make-channel :buffer-size 1))
@@ -124,8 +130,7 @@
       (multiple-value-bind (value received-p) (await receiver :timeout 1)
         (expect value :to-be nil)
         (expect received-p :to-be nil))))
-  (it
-    "exposes the closed channel when SEND rejects it"
+  (it "signals CHANNEL-CLOSED on SEND or TRY-SEND after close"
     (let ((channel (make-channel)))
       (close-channel channel)
       (handler-case (progn
@@ -171,3 +176,17 @@
           (cl-concurrent-kit::fifo-remove fifo second)
           (expect (cl-concurrent-kit::fifo-pop fifo) :to-be :first)
           (expect (cl-concurrent-kit::fifo-empty-p fifo) :to-be-truthy)))))
+
+(describe "channel SELECT waiter registration"
+  (it "deduplicates repeated registration of the same SELECT waiter"
+    (let ((channel (make-channel))
+          (waiter (make-semaphore)))
+      (cl-concurrent-kit::%channel-add-waiter channel waiter)
+      (cl-concurrent-kit::%channel-add-waiter channel waiter)
+      (expect (hash-table-count
+               (cl-concurrent-kit::channel-waiters channel))
+              :to-be 1)
+      (cl-concurrent-kit::%channel-remove-waiter channel waiter)
+      (expect (hash-table-count
+               (cl-concurrent-kit::channel-waiters channel))
+              :to-be 0))))

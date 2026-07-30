@@ -44,11 +44,15 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `DELIVER` `(promise value)` | Settle successfully. |
 | `DELIVER-ERROR` `(promise condition)` | Settle as failed. |
 | `AWAIT` `(promise &key timeout)` | Block for the settled value, or re-signal its condition. |
+| `PROMISE-THEN` `(promise on-fulfilled &optional on-rejected)` | Continuation-passing composition: register `on-fulfilled`/`on-rejected` and return a new `PROMISE` for whichever one runs, without blocking. See [Core concepts](concepts.md). |
+| `PROMISE-RACE` `(promises)` | A `PROMISE` that settles the same way as whichever of `promises` (non-empty) settles first, via the same continuation-passing composition as `PROMISE-THEN`. |
 | `FUTURE` `(&body body)` | Macro: spawn `body` on a thread, return its `PROMISE` immediately. |
-| `PROMISE-ALL-SETTLED` `(promises)` | Fulfill with ordered settlement records after every input settles; failures are represented rather than re-signaled. Empty input yields `NIL`. |
+| `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records; failures are represented rather than re-signaled. Never fails, even if some inputs do. Empty input yields `NIL`. |
 | `PROMISE-SETTLEMENT` | Structure type returned by `PROMISE-ALL-SETTLED`. |
 | `PROMISE-SETTLEMENT-P` `(x)` | Type predicate for settlement records. |
-| `PROMISE-SETTLEMENT-STATE` / `-VALUE` / `-CONDITION` `(settlement)` | Access the `:FULFILLED`/`:FAILED` state and its value or condition. |
+| `PROMISE-SETTLEMENT-STATE` `(settlement)` | `:FULFILLED` or `:FAILED`. |
+| `PROMISE-SETTLEMENT-VALUE` `(settlement)` | Meaningful when `:FULFILLED`. |
+| `PROMISE-SETTLEMENT-CONDITION` `(settlement)` | Meaningful when `:FAILED`. |
 
 ## Channels
 
@@ -82,8 +86,8 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `timeout` bounds the cleanup wait for tracked children and signals `OPERATION-TIMED-OUT` after cancelling them. |
-| `SPAWN` `(scope function &key executor)` | Start a tracked child task, optionally on a shared executor, and return its `PROMISE`. |
+| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `TIMEOUT` (seconds) bounds only the wait for already-running children once the body itself has returned or signalled; on expiry every remaining child is cancelled cooperatively and `OPERATION-TIMED-OUT` is signaled. |
+| `SPAWN` `(scope function &key executor)` | Start a tracked child task, return its `PROMISE`. With `EXECUTOR`, the child runs on that executor's worker pool instead of a dedicated thread. |
 | `CHECK-CANCELLED` `(scope)` | Signal `TASK-CANCELLED` if `scope` has been cancelled. |
 
 ## Conditions

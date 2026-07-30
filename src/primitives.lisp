@@ -6,13 +6,7 @@
 ;;;; behavior beyond what SB-THREAD already documents; the wrapping exists so
 ;;;; the rest of this package (and its callers) name one vocabulary instead of
 ;;;; reaching into SB-THREAD directly.
-(progn
-  (declaim
-    (optimize (speed 3) (safety 1) (debug 0) (compilation-speed 0)
-              #+sb-cover (sb-c:store-coverage-data 3)))
-  (in-package #:cl-concurrent-kit))
-
-#-sb-cover (declaim (inline current-thread thread-name thread-alive-p condition-wait condition-notify condition-broadcast wait-on-semaphore signal-semaphore atomic-counter-incf atomic-counter-decf %deadline-from-timeout))
+(in-package #:cl-concurrent-kit)
 
 ;;; Threads
 (defun make-thread (function &key name arguments)
@@ -126,9 +120,17 @@ or NIL if TIMEOUT is NIL (no deadline)."
     (+ (get-internal-real-time) (round (* timeout internal-time-units-per-second)))))
 
 (defmacro %wait-until ((condition-variable lock deadline) &body predicate-forms)
-  "Wait with LOCK held until PREDICATE-FORMS produce a non-NIL value.
+  "Wait with LOCK held until PREDICATE-FORMS produce a non-NIL value, and
+return that value with LOCK still held.
 
-The condition variable, lock, and deadline forms are evaluated once. The expanded predicate runs directly in the caller, avoiding a per-operation thunk allocation on channel and promise hot paths. SB-THREAD:CONDITION-WAIT always returns with LOCK held; this macro therefore returns :TIMEOUT within the caller's WITH-LOCK-HELD dynamic extent."
+CONDITION-VARIABLE, LOCK, and DEADLINE are evaluated once. PREDICATE-FORMS
+expand directly into the loop body instead of being wrapped in a thunk, so
+this costs no per-operation closure allocation on CHANNEL and PROMISE's hot
+paths. SB-THREAD:CONDITION-WAIT always reacquires LOCK before returning, on a
+timeout or otherwise, so this macro's :TIMEOUT return is itself within the
+caller's WITH-LOCK-HELD dynamic extent, LOCK held -- callers that need to
+clean up LOCK-protected state before signaling a timeout (CHANNEL's
+unbuffered SEND is the one in this codebase) can rely on that."
   (let* ((condition-variable-var (gensym "CONDITION-VARIABLE-"))
          (lock-var (gensym "LOCK-"))
          (deadline-var (gensym "DEADLINE-"))
@@ -153,3 +155,26 @@ The condition variable, lock, and deadline forms are evaluated once. The expande
            (unless (condition-wait ,condition-variable-var ,lock-var
                                    :timeout ,timeout-var)
              (return :timeout)))))))
+
+(defmacro %with-deadline-wait ((result-var condition-variable lock deadline
+                                timeout operation)
+                               predicate-form &body body)
+  "Bind RESULT-VAR to (%WAIT-UNTIL (CONDITION-VARIABLE LOCK DEADLINE)
+PREDICATE-FORM) and run BODY. If the wait times out, signal
+OPERATION-TIMED-OUT naming OPERATION and TIMEOUT instead of running BODY at
+all.
+
+DEADLINE and TIMEOUT are taken separately, not derived from one another here,
+because a caller that waits more than once against the same overall budget --
+CHANNEL's unbuffered SEND is the one in this codebase -- must compute
+%DEADLINE-FROM-TIMEOUT exactly once and reuse it, while TIMEOUT (the original
+seconds value) is needed again on every wait purely to report it. Callers
+that wait only once typically write DEADLINE as
+`(%deadline-from-timeout TIMEOUT)` inline.
+
+A caller whose own cleanup must run under LOCK before a timeout is reported
+should use %WAIT-UNTIL directly instead -- see its docstring."
+  `(let ((,result-var (%wait-until (,condition-variable ,lock ,deadline) ,predicate-form)))
+     (when (eq ,result-var :timeout)
+       (error 'operation-timed-out :operation ,operation :timeout ,timeout))
+     ,@body))

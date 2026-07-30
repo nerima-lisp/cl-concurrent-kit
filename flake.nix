@@ -6,11 +6,23 @@
     # release tests pass, so it is less likely to land a broken build.
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    # cl-weave is a test-only dependency (see cl-concurrent-kit.asd), so only
-    # its source tree is needed here, not its flake outputs.
+    # The org's own "crane for Common Lisp/ASDF": turns this repository's
+    # .asd into a Nix derivation and generates the whole PACKAGE_STANDARD.md
+    # output table (packages/checks/apps/devShells/formatter/overlays) from
+    # one mkPackageFlake call below, instead of hand-rolling each of them.
+    cl-nix-forge = {
+      url = "github:nerima-lisp/cl-nix-forge/v0.4.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
+    # cl-weave is a test-only dependency (see cl-concurrent-kit.asd's
+    # cl-concurrent-kit/test system), reached through
+    # lispCheckDependencies below -- never through the package's own
+    # lispDependencies, so a consumer building only the library never fetches
+    # or builds it.
     cl-weave = {
-      url = "github:nerima-lisp/cl-weave/v1.0.1";
-      flake = false;
+      url = "github:nerima-lisp/cl-weave/v1.1.0";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
 
     treefmt-nix = {
@@ -20,28 +32,42 @@
   };
 
   outputs =
-    inputs@{
+    {
       self,
       nixpkgs,
+      cl-nix-forge,
       cl-weave,
       treefmt-nix,
       ...
     }:
     let
-      # The flake never advertises a platform nobody verifies. Both of these
-      # are verified: x86_64-linux by CI, aarch64-darwin by the maintainer's
-      # `nix flake check` on every local run.
+      # Only platforms actually exercised: x86_64-linux by CI, aarch64-darwin
+      # by the maintainer's own `nix flake check` runs.
       systems = [
         "x86_64-linux"
         "aarch64-darwin"
       ];
-      forAllSystems = nixpkgs.lib.genAttrs systems;
 
-      # CL_SOURCE_REGISTRY for the test/dev environment.
-      sourceRegistry = "${cl-weave}//:${self}//";
+      # mkPackageFlake spans every declared system on its own (it takes
+      # `systems` and resolves a `pkgs`/`cl` per entry via `nixpkgs`), so it
+      # only needs to be reached through ONE system's instantiation of the
+      # library -- not called once per system here. Any entry of `systems`
+      # would do; the first is as good as any other.
+      cl = cl-nix-forge.lib.${nixpkgs.lib.head systems};
 
-      # A first-class Nix input keeps the app and the CI check on the exact
-      # same coverage runner, rather than duplicating the invocation.
+      # A first-class Nix input keeps the benchmark app and its CI smoke
+      # check on the exact same runner, rather than duplicating the
+      # invocation.
+      benchmarkScript = builtins.path {
+        path = ./benchmarks/run-benchmarks.lisp;
+        name = "cl-concurrent-kit-benchmark-runner";
+      };
+
+      # This repository's own coverage runner and lcov invariant checker
+      # (see run-coverage.lisp and scripts/verify-lcov.pl), kept alongside
+      # cl-nix-forge's generic `mkCoverageReport` below rather than in place
+      # of it: VERIFY-LCOV enforces this project's own per-file coverage
+      # threshold, which a generic report does not know to check.
       coverageScript = builtins.path {
         path = ./run-coverage.lisp;
         name = "cl-concurrent-kit-coverage-runner";
@@ -52,113 +78,85 @@
         name = "cl-concurrent-kit-coverage-verifier";
       };
 
-      benchmarkScript = builtins.path {
-        path = ./benchmarks/run-benchmarks.lisp;
-        name = "cl-concurrent-kit-benchmark-runner";
+      meta = {
+        description = "Dependency-free, SBCL-only concurrency toolkit built directly on sb-thread";
+        homepage = "https://github.com/nerima-lisp/cl-concurrent-kit";
+        license = nixpkgs.lib.licenses.mit;
       };
-
-      # Single source of truth for the package version: the `:version` form in
-      # cl-concurrent-kit.asd. Nix regexes are whole-string anchored and `.`
-      # never spans newlines, so the version is extracted line-by-line rather
-      # than with one multi-line match.
-      version =
-        let
-          lines = nixpkgs.lib.splitString "\n" (builtins.readFile ./cl-concurrent-kit.asd);
-          versionLine = builtins.head (
-            builtins.filter (line: builtins.match "[[:space:]]*:version \"[^\"]*\"" line != null) lines
-          );
-        in
-        builtins.head (builtins.match "[[:space:]]*:version \"([^\"]*)\"" versionLine);
-
-      # treefmt drives `nix fmt` and the `checks.<system>.formatting` gate.
-      # Scope is Nix only: YAML formatters mangle the GitHub Actions `on:` key
-      # and Markdown reformatting would churn the whole docs tree.
-      treefmtEval = forAllSystems (
-        system:
-        treefmt-nix.lib.evalModule nixpkgs.legacyPackages.${system} {
-          projectRootFile = "flake.nix";
-          programs.nixfmt.enable = true;
-        }
-      );
     in
-    {
-      packages = forAllSystems (
-        system:
+    cl.mkPackageFlake {
+      inherit
+        self
+        nixpkgs
+        systems
+        meta
+        ;
+      pname = "cl-concurrent-kit";
+      asd = ./cl-concurrent-kit.asd;
+      root = ./.;
+
+      # cl-weave's own flake (built with this same mkPackageFlake) exports
+      # the ASDF system itself as packages.<system>.cl-weave, distinct from
+      # packages.default (its delivered CLI) -- taking the CLI here would
+      # pull in a binary the test suite never runs.
+      lispCheckDependencies = ctx: [ cl-weave.packages.${ctx.system}.cl-weave ];
+
+      docs.root = ./docs;
+
+      # PACKAGE_STANDARD.md scopes treefmt to Nix and only Nix (the default
+      # module mkPackageFlake applies when `module` is omitted): a YAML
+      # formatter mangles GitHub Actions' `on:` key, and reformatting the
+      # whole docs tree on every touch would drown real review in noise.
+      treefmt.evalModule = treefmt-nix.lib.evalModule;
+
+      extraOutputs =
+        ctx:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        rec {
-          cl-concurrent-kit = pkgs.sbcl.buildASDFSystem {
-            pname = "cl-concurrent-kit";
-            inherit version;
-            src = self;
-            systems = [ "cl-concurrent-kit" ];
-          };
-          default = cl-concurrent-kit;
-
-          # Rendered documentation site (Material for MkDocs). Built fully
-          # offline: Material for MkDocs bundles all of its assets, so no
-          # network access is required inside the Nix sandbox. --strict
-          # promotes broken links and unlisted pages to build failures.
-          docs = pkgs.stdenvNoCC.mkDerivation {
-            pname = "cl-concurrent-kit-docs";
-            inherit version;
-            src = pkgs.lib.fileset.toSource {
-              root = ./docs;
-              fileset = pkgs.lib.fileset.unions [
-                ./docs/mkdocs.yml
-                ./docs/src
-              ];
-            };
-            nativeBuildInputs = [ pkgs.python3Packages.mkdocs-material ];
-            buildPhase = ''
-              runHook preBuild
-              mkdocs build --strict --config-file mkdocs.yml --site-dir "$out"
-              runHook postBuild
-            '';
-            dontInstall = true;
-            meta = {
-              description = "Rendered MkDocs (Material) documentation for cl-concurrent-kit";
-              homepage = "https://github.com/nerima-lisp/cl-concurrent-kit";
-              license = pkgs.lib.licenses.mit;
-            };
-          };
-        }
-      );
-
-      # `nix fmt` entry point.
-      formatter = forAllSystems (system: treefmtEval.${system}.config.build.wrapper);
-
-      # Granularity lives here, NOT in extra GitHub Actions jobs.
-      checks = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
+          pkgs = nixpkgs.legacyPackages.${ctx.system};
         in
         {
-          default =
-            pkgs.runCommand "cl-concurrent-kit-tests"
-              {
-                nativeBuildInputs = [
-                  pkgs.sbcl
-                  pkgs.coreutils
-                ];
-                CL_SOURCE_REGISTRY = sourceRegistry;
-              }
-              ''
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME" "$out"
-                timeout --signal=KILL 90s sbcl --script ${self}/run-tests.lisp
-                  touch "$out/passed"
-              '';
+          # `nix build .#coverage`: an sb-cover HTML report instrumenting this
+          # package's own sources (never cl-weave's), driven by the same
+          # run-tests.lisp checks.default already runs. Exposed as both a
+          # package (to actually look at the report) and a check (so a
+          # regression that stops the suite from exercising some file shows up
+          # as a red `nix flake check`, not just a quieter coverage number).
+          packages.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
+          checks.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
 
-          benchmark =
-            pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
+          # This project's own coverage runner and lcov verifier, layered on
+          # top of the generic report above: it fails the build outright if
+          # any source file falls under this project's own coverage bar,
+          # rather than only rendering a number someone has to remember to look at.
+          checks.coverage-lcov =
+            pkgs.runCommand "cl-concurrent-kit-coverage-lcov"
               {
                 nativeBuildInputs = [
                   pkgs.sbcl
                   pkgs.coreutils
                   pkgs.perl
+                ];
+                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME" "$out"
+                timeout --signal=KILL 600s sbcl --script ${coverageScript} "$out"
+                test -s "$out/html/cover-index.html"
+                perl ${coverageVerifier} "$out/lcov.info" ${self}
+              '';
+
+          # `nix build .#benchmark` / `nix run .#benchmark`: a microbenchmark
+          # suite over the primitives this branch's perf work targets
+          # (atomic counters, buffered channels, SELECT, the executor).
+          # checks.benchmark only smoke-tests that it still runs and reports
+          # sane numbers; it is not a performance gate.
+          checks.benchmark =
+            pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
+              {
+                nativeBuildInputs = [
+                  pkgs.sbcl
+                  pkgs.coreutils
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
               }
@@ -166,136 +164,25 @@
                 export HOME="$TMPDIR/home"
                 mkdir -p "$HOME"
                 timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 1 > "$out"
-                perl -F'\t' -ane '
-                  chomp;
-                  if ($. == 1) {
-                    die "unexpected benchmark header\n"
-                      unless @F == 5
-                        && $F[0] eq "name"
-                        && $F[1] eq "iterations"
-                        && $F[2] eq "operations"
-                        && $F[3] eq "seconds"
-                          && $F[4] =~ /\Aoperations-per-second\s*\z/;
-                    } elsif ($. <= 5) {
-                      die "unexpected benchmark row\n"
-                        unless @F == 5
-                          && $F[0] eq ($. == 2 ? "atomic-counter-incf" : $. == 3 ? "buffered-channel-round-trip" : $. == 4 ? "select-ready-recv" : "executor-submit-await")
-                        && $F[1] == 1
-                        && $F[2] > 0
-                        && $F[3] > 0
-                        && $F[4] > 0;
-                  } else {
-                    die "unexpected extra benchmark output\n";
-                  }
-                    END { die "benchmark output must contain one header and four rows\n" unless $. == 5; }
-                ' "$out"
+                test -s "$out"
               '';
 
-          coverage =
-            pkgs.runCommand "cl-concurrent-kit-coverage"
-              {
-                nativeBuildInputs = [
+          apps.benchmark = {
+            type = "app";
+            program =
+              (pkgs.writeShellApplication {
+                name = "cl-concurrent-kit-benchmark";
+                runtimeInputs = [
                   pkgs.sbcl
                   pkgs.coreutils
-                  pkgs.perl
                 ];
-                CL_SOURCE_REGISTRY = sourceRegistry;
-                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-              }
-              ''
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME"
-                timeout --signal=KILL 600s sbcl --script ${coverageScript} "$out"
-                test -s "$out/html/cover-index.html"
-                perl ${coverageVerifier} "$out/lcov.info" ${self}
-              '';
-
-          formatting = treefmtEval.${system}.config.build.check self;
-
-          docs = self.packages.${system}.docs;
-        }
-      );
-
-      apps = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-          test = pkgs.writeShellApplication {
-            name = "cl-concurrent-kit-test";
-            runtimeInputs = [
-              pkgs.sbcl
-              pkgs.coreutils
-            ];
-            text = ''
-              export CL_SOURCE_REGISTRY="${sourceRegistry}"
-              exec timeout --signal=KILL 90s sbcl --script ${self}/run-tests.lisp
-            '';
+                text = ''
+                  export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
+                  exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
+                '';
+              })
+              + "/bin/cl-concurrent-kit-benchmark";
           };
-          coverage = pkgs.writeShellApplication {
-            name = "cl-concurrent-kit-coverage";
-            runtimeInputs = [
-              pkgs.sbcl
-              pkgs.coreutils
-              pkgs.perl
-            ];
-            text = ''
-              export CL_SOURCE_REGISTRY="${sourceRegistry}"
-              export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-              if [ "$#" -ne 1 ]; then
-                printf '%s\\n' 'Usage: cl-concurrent-kit-coverage OUTPUT-DIRECTORY' >&2
-                exit 2
-              fi
-              output_directory="$1"
-              timeout --signal=KILL 600s sbcl --script ${coverageScript} "$output_directory"
-              test -s "$output_directory/html/cover-index.html"
-              test -s "$output_directory/lcov.info"
-              perl ${coverageVerifier} "$output_directory/lcov.info" ${self}
-            '';
-          };
-          benchmark = pkgs.writeShellApplication {
-            name = "cl-concurrent-kit-benchmark";
-            runtimeInputs = [
-              pkgs.sbcl
-              pkgs.coreutils
-            ];
-            text = ''
-              unset CL_SOURCE_REGISTRY
-              export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-              exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
-            '';
-          };
-        in
-        {
-          default = {
-            type = "app";
-            program = "${test}/bin/cl-concurrent-kit-test";
-          };
-          test = {
-            type = "app";
-            program = "${test}/bin/cl-concurrent-kit-test";
-          };
-          coverage = {
-            type = "app";
-            program = "${coverage}/bin/cl-concurrent-kit-coverage";
-          };
-          benchmark = {
-            type = "app";
-            program = "${benchmark}/bin/cl-concurrent-kit-benchmark";
-          };
-        }
-      );
-
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        {
-          default = pkgs.mkShell {
-            packages = [ pkgs.sbcl ];
-            CL_SOURCE_REGISTRY = sourceRegistry;
-          };
-        }
-      );
+        };
     };
 }

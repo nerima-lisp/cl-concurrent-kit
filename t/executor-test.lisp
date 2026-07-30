@@ -49,8 +49,7 @@
                             (signal-semaphore started)
                             (wait-on-semaphore release)
                             :completed)))
-            (unless (wait-on-semaphore started :timeout 1)
-              (error "executor worker did not start"))
+            (wait-or-fail started "executor worker did not start")
             (setf shutdown-thread
                   (make-thread
                    (lambda ()
@@ -58,8 +57,7 @@
                      (signal-semaphore shutdown-finished))))
             (expect (wait-on-semaphore shutdown-finished :timeout 0.05) :to-be nil)
             (signal-semaphore release)
-            (unless (wait-on-semaphore shutdown-finished :timeout 1)
-              (error "shutdown did not wait for the active task"))
+            (wait-or-fail shutdown-finished "shutdown did not wait for the active task")
             (expect (await result :timeout 1) :to-be :completed)
             (join-thread shutdown-thread)
             (setf shutdown-thread nil))

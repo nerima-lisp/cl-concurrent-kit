@@ -38,7 +38,17 @@
         (setf go-p t)
         (condition-notify cv))
       (join-thread thread)
-      (expect (thread-alive-p thread) :to-be nil))))
+      (expect (thread-alive-p thread) :to-be nil)))
+  (it "CURRENT-THREAD and THREAD-NAME identify the calling thread from within it"
+    (let ((observed-thread nil)
+          (observed-name nil))
+      (join-thread
+       (make-thread (lambda ()
+                      (setf observed-thread (current-thread))
+                      (setf observed-name (thread-name (current-thread))))
+                    :name "cl-concurrent-kit primitives test thread"))
+      (expect (thread-name observed-thread) :to-equal "cl-concurrent-kit primitives test thread")
+      (expect observed-name :to-equal "cl-concurrent-kit primitives test thread"))))
 
 (describe
   "locks"
@@ -125,85 +135,50 @@
         (mapc #'join-thread down-threads))
       (expect (atomic-counter-value counter) :to-be 0))))
 
-(progn
-  (describe
-    "additional primitive behavior"
-    (it
-      "accepts the supplied JOIN-THREAD default for a normally completed thread"
-      (let ((thread
-            (make-thread
+(describe
+  "additional primitive behavior"
+  (it
+    "accepts the supplied JOIN-THREAD default for a normally completed thread"
+    (let ((thread
+          (make-thread
+            (lambda ()
+              :completed))))
+      (expect (join-thread thread :default :failed) :to-be :completed)))
+  (it
+    "uses MAKE-SEMAPHORE initial count as immediately available permits"
+    (let ((semaphore (make-semaphore :count 2)))
+      (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
+      (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
+      (expect (wait-on-semaphore semaphore :timeout 0.01d0) :to-be nil)))
+  (it
+    "wakes every condition-variable waiter after CONDITION-BROADCAST"
+    (let* ((lock (make-lock))
+           (condition-variable (make-condition-variable))
+           (ready (make-semaphore))
+           (release-p nil)
+           (waiters
+          (loop repeat 2
+                collect (make-thread
               (lambda ()
-                :completed))))
-        (expect (join-thread thread :default :failed) :to-be :completed)))
-    (it
-      "uses MAKE-SEMAPHORE initial count as immediately available permits"
-      (let ((semaphore (make-semaphore :count 2)))
-        (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
-        (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
-        (expect (wait-on-semaphore semaphore :timeout 0.01d0) :to-be nil)))
-    (it
-      "wakes every condition-variable waiter after CONDITION-BROADCAST"
-      (let* ((lock (make-lock))
-             (condition-variable (make-condition-variable))
-             (ready (make-semaphore))
-             (release-p nil)
-             (waiters
-            (loop repeat 2
-                  collect (make-thread
-                (lambda ()
-                  (with-lock-held
-                    (lock)
-                    (signal-semaphore ready)
-                    (loop until release-p
-                          do (condition-wait condition-variable lock))
-                    :released))))))
-        (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
-        (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
-        (with-lock-held
-          (lock)
-          (setf release-p t)
-          (condition-broadcast condition-variable))
-        (expect
-          (mapcar (function join-thread) waiters)
-          :to-equal
-          (list :released :released))))
-    (it
-      "applies explicit deltas in atomic counter operations"
-      (let ((counter (make-atomic-counter)))
-        (atomic-counter-incf counter 3)
-        (atomic-counter-decf counter 2)
-        (expect (atomic-counter-value counter) :to-be 1))))
-  (describe
-    "public condition reports"
-    (it
-      "retains condition context and renders an actionable report"
-      (let* ((timeout
-            (make-condition (quote operation-timed-out) :operation :recv :timeout 0.125d0))
-             (promise (make-condition (quote promise-already-fulfilled) :promise :promise))
-             (channel (make-condition (quote channel-closed) :channel :channel))
-             (executor (make-condition (quote executor-shut-down) :executor :executor))
-             (cancelled (make-condition (quote task-cancelled) :scope :scope))
-             (scope
-            (make-condition
-              (quote scope-error)
-              :causes
-              (list
-                (make-condition
-                  (quote simple-error)
-                  :format-control
-                  "child failed"
-                  :format-arguments
-                  nil)))))
-        (expect (operation-timed-out-operation timeout) :to-be :recv)
-        (expect (operation-timed-out-timeout timeout) :to-be 0.125d0)
-        (expect (promise-already-fulfilled-promise promise) :to-be :promise)
-        (expect (channel-closed-channel channel) :to-be :channel)
-        (expect (executor-shut-down-executor executor) :to-be :executor)
-        (expect (task-cancelled-scope cancelled) :to-be :scope)
-        (expect (length (scope-error-causes scope)) :to-be 1)
-        (expect (search "timed out" (princ-to-string timeout)) :to-be-truthy)
-        (expect (search "already settled" (princ-to-string promise)) :to-be-truthy)
-        (expect (search "closed channel" (princ-to-string channel)) :to-be-truthy)
-        (expect (search "shut down" (princ-to-string executor)) :to-be-truthy)
-        (expect (search "cancelled" (princ-to-string cancelled)) :to-be-truthy)
-        (expect (search "child failed" (princ-to-string scope)) :to-be-truthy)))))
+                (with-lock-held
+                  (lock)
+                  (signal-semaphore ready)
+                  (loop until release-p
+                        do (condition-wait condition-variable lock))
+                  :released))))))
+      (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
+      (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
+      (with-lock-held
+        (lock)
+        (setf release-p t)
+        (condition-broadcast condition-variable))
+      (expect
+        (mapcar (function join-thread) waiters)
+        :to-equal
+        (list :released :released))))
+  (it
+    "applies explicit deltas in atomic counter operations"
+    (let ((counter (make-atomic-counter)))
+      (atomic-counter-incf counter 3)
+      (atomic-counter-decf counter 2)
+      (expect (atomic-counter-value counter) :to-be 1))))

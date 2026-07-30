@@ -1,138 +1,91 @@
+;;;; benchmarks/run-benchmarks.lisp
+;;;;
+;;;; Characterizes each primitive's own overhead using cl-weave's BENCHMARK
+;;;; rather than a hand-rolled timing loop, so these numbers stay directly
+;;;; comparable to any other cl-weave-benchmarked SBCL library. Run with:
+;;;;   nix develop -c sbcl --script benchmarks/run-benchmarks.lisp
+
 (require :asdf)
 
 (defun script-directory ()
-  (make-pathname :name nil :type nil :defaults *load-pathname*))
+  (make-pathname :name nil
+                 :type nil
+                 :defaults (or *load-truename*
+                               *compile-file-truename*
+                               (error "Unable to determine the script location"))))
 
 (defun source-root ()
+  "This project's own root, honoring CL_CONCURRENT_KIT_SOURCE_ROOT when set --
+necessary when this script itself runs from a location that is not the
+project root, e.g. copied into the Nix store as its own derivation by
+flake.nix's benchmark check/app."
   (or
-    (let ((value (uiop:getenv "CL_CONCURRENT_KIT_SOURCE_ROOT")))
-      (and value (uiop:ensure-directory-pathname value)))
-    (truename (merge-pathnames "../" (script-directory)))))
+   (let ((value (uiop:getenv "CL_CONCURRENT_KIT_SOURCE_ROOT")))
+     (and value (uiop:ensure-directory-pathname value)))
+   (merge-pathnames "../" (script-directory))))
 
-(let ((*package* (find-package :asdf)))
-  (load (merge-pathnames #P"cl-concurrent-kit.asd" (source-root))))
+(asdf:initialize-source-registry
+ `(:source-registry (:tree ,(source-root)) :inherit-configuration))
 
 (asdf:load-system "cl-concurrent-kit")
+(asdf:load-system "cl-weave")
 
 (in-package #:cl-concurrent-kit)
 
-(defparameter +benchmark-samples+ 5)
+(defun %report-benchmark (name result)
+  (format t "~&~A~40T median=~,4Fms mean=~,4Fms min=~,4Fms max=~,4Fms~%"
+          name
+          (cl-weave:median-ms result)
+          (cl-weave:mean-ms result)
+          (cl-weave:minimum-ms result)
+          (cl-weave:maximum-ms result)))
 
-(defun elapsed-seconds (start end)
-  (/ (- end start) internal-time-units-per-second))
+(%report-benchmark
+ "atomic-counter-incf, 1000 increments"
+ (let ((counter (make-atomic-counter)))
+   (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+     (atomic-counter-incf counter))))
 
-(defun median (values)
-  (let ((sorted (sort (copy-seq values) #'<)))
-    (elt sorted (floor (length sorted) 2))))
+(%report-benchmark
+ "buffered-channel send+recv round-trip, 1000 pairs"
+ (let ((channel (make-channel :buffer-size 1)))
+   (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+     (send channel :x)
+     (recv channel))))
 
-(defun sample-benchmark (thunk)
-  (let ((start (get-internal-real-time))
-        #+sbcl (bytes-before (sb-ext:get-bytes-consed)))
-    (funcall thunk)
-    (values
-      (elapsed-seconds start (get-internal-real-time))
-      #+sbcl (- (sb-ext:get-bytes-consed) bytes-before)
-      #-sbcl 0)))
+(%report-benchmark
+ "select-ready-recv, 1000 pairs"
+ (let ((channel (make-channel :buffer-size 1)))
+   (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+     (send channel :x)
+     (select ((recv channel) (value) value)))))
 
-(defun report-benchmark (name iterations operations thunk)
-  (funcall thunk)
-  (let ((seconds nil)
-        (bytes-consed nil))
-    (dotimes (sample +benchmark-samples+)
-      (declare (ignore sample))
-      (sb-ext:gc :full t)
-      (multiple-value-bind (elapsed consed) (sample-benchmark thunk)
-        (push elapsed seconds)
-        (push consed bytes-consed)))
-    (let* ((median-seconds (median seconds))
-           (minimum-seconds (reduce #'min seconds))
-           (median-bytes (median bytes-consed))
-           (operations-per-second (/ operations median-seconds)))
-      (format
-        *error-output*
-        "~A: ~D samples, min=~,6Fs median=~,6Fs median-bytes-consed=~D~%"
-        name
-        +benchmark-samples+
-        minimum-seconds
-        median-seconds
-        median-bytes)
-      (format
-        t
-        "~A~C~D~C~D~C~,9F~C~,3F~%"
-        name
-        #\Tab
-        iterations
-        #\Tab
-        operations
-        #\Tab
-        median-seconds
-        #\Tab
-        operations-per-second))))
+(%report-benchmark
+ "promise deliver+await round-trip, 1000 pairs"
+ (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+   (let ((promise (make-promise)))
+     (deliver promise :x)
+     (await promise))))
 
-(defun benchmark-atomic-counter (iterations)
-  (let ((counter (make-atomic-counter)))
-    (report-benchmark
-      "atomic-counter-incf"
-      iterations
-      iterations
-      (lambda ()
-        (dotimes (index iterations)
-          (declare (ignore index))
-          (atomic-counter-incf counter))))))
+(%report-benchmark
+ "promise-then continuation registration, 1000 pairs"
+ (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+   (let ((promise (make-promise)))
+     (deliver promise :x)
+     (await (promise-then promise (function identity))))))
 
-(defun benchmark-buffered-channel (iterations)
-  (let ((channel (make-channel :buffer-size 1)))
-    (report-benchmark
-      "buffered-channel-round-trip"
-      iterations
-      (* 2 iterations)
-      (lambda ()
-        (dotimes (index iterations)
-          (send channel index)
-          (recv channel))))))
+(let ((executor (make-executor :size 4)))
+  (unwind-protect
+      (%report-benchmark
+       "executor submit+await round-trip, 200 tasks"
+       (cl-weave:benchmark (:warmup 50 :samples 20 :iterations 200)
+         (await (submit executor (lambda () :x)))))
+    (shutdown-executor executor :wait t)))
 
-(defun benchmark-select-ready-recv (iterations)
-  (let ((channel (make-channel :buffer-size 1)))
-    (report-benchmark
-      "select-ready-recv"
-      iterations
-      (* 2 iterations)
-      (lambda ()
-        (dotimes (index iterations)
-          (send channel index)
-          (select ((recv channel) (value) value)))))))
+(%report-benchmark
+ "with-task-scope spawn+await round-trip (thread child), 200 scopes"
+ (cl-weave:benchmark (:warmup 50 :samples 20 :iterations 200)
+   (with-task-scope (scope)
+     (await (spawn scope (lambda () :x))))))
 
-(defun benchmark-executor (iterations)
-  (let ((executor (make-executor :size 4)))
-    (unwind-protect (report-benchmark
-        "executor-submit-await"
-        iterations
-        (* 2 iterations)
-        (lambda ()
-          (dotimes (index iterations)
-            (declare (ignore index))
-            (await
-              (submit
-                executor
-                (lambda ()
-                  nil))))))
-      (shutdown-executor executor :wait t))))
-
-(defun main ()
-  (let ((iterations
-        (or
-          (ignore-errors (parse-integer (first uiop:*command-line-arguments*)))
-          1000000)))
-    (format
-      t
-      "name~Citerations~Coperations~Cseconds~Coperations-per-second~%"
-      #\Tab
-      #\Tab
-      #\Tab
-      #\Tab)
-    (benchmark-atomic-counter iterations)
-    (benchmark-buffered-channel iterations)
-    (benchmark-select-ready-recv iterations)
-    (benchmark-executor iterations)))
-
-(main)
+(uiop:quit 0)

@@ -1,79 +1,76 @@
 (progn
-  (format *error-output* "coverage: bootstrap~%")
-  (finish-output *error-output*)
-  (require :sb-cover)
-  (format *error-output* "coverage: sb-cover~%")
-  (finish-output *error-output*)
-  (require :asdf)
-  (format *error-output* "coverage: asdf~%")
-  (finish-output *error-output*)
-  (pushnew :sb-cover *features*)
-  nil)
+  #.(progn (require :asdf) (require :sb-cover) nil)
 
-(sb-cover:enable-coverage-logging)
-
-(progn
   (defun script-directory ()
-    (make-pathname :name nil :type nil :defaults *load-pathname*))
+    (make-pathname :name nil
+                   :type nil
+                   :defaults (or *load-truename*
+                                 *compile-file-truename*
+                                 (error "Unable to determine the script location"))))
+
   (defun source-root ()
-    (or
-      (let ((value (uiop:getenv "CL_CONCURRENT_KIT_SOURCE_ROOT")))
-        (and value (uiop:ensure-directory-pathname value)))
-      (truename (merge-pathnames "./" (script-directory)))))
-  (defun output-directory ()
+    "This project's own root, honoring CL_CONCURRENT_KIT_SOURCE_ROOT when set.
+Necessary because this script itself may run from a location that is not the
+project root -- e.g. copied into the Nix store as its own derivation by
+flake.nix's coverage check/app, which passes the real checkout separately
+rather than relying on this script's own store path."
     (uiop:ensure-directory-pathname
-      (or
-        (first uiop:*command-line-arguments*)
-        (error "Usage: sbcl --script run-coverage.lisp OUTPUT-DIRECTORY"))))
-  (defun source-files (root)
-    (mapcar
-      (lambda (relative)
-        (truename (merge-pathnames relative root)))
-      (list
-        #P"src/package.lisp"
-        #P"src/conditions.lisp"
-        #P"src/primitives.lisp"
-        #P"src/fifo.lisp"
-        #P"src/promise.lisp"
-        #P"src/channel.lisp"
-        #P"src/select.lisp"
-        #P"src/executor.lisp"
-        #P"src/scope-state.lisp"
-        #P"src/scope-execution.lisp"
-        #P"src/scope.lisp")))
-  (defun discard-non-source-coverage-records (source-names)
+     (let ((override (uiop:getenv "CL_CONCURRENT_KIT_SOURCE_ROOT")))
+       (if override
+           (uiop:parse-native-namestring override)
+           (script-directory)))))
+
+  (defun configure-local-source-registry (root)
+    (asdf:initialize-source-registry
+     `(:source-registry
+       (:tree ,root)
+       :inherit-configuration)))
+
+  (defun output-directory ()
+    (let ((argument (first (uiop:command-line-arguments))))
+      (ensure-directories-exist
+       (if argument
+           (uiop:ensure-directory-pathname (uiop:parse-native-namestring argument))
+           (merge-pathnames "coverage/" (uiop:getcwd))))))
+
+  (defun configure-isolated-output-cache (directory)
+    (let ((cache (merge-pathnames "asdf-cache/" directory)))
+      (ensure-directories-exist cache)
+      (asdf:initialize-output-translations
+       `(:output-translations
+         (t ,cache)
+         :ignore-inherited-configuration))))
+
+  (defun source-file-p (file root)
+    "True for FILE under ROOT's src/ directory -- this project's own sources,
+never cl-weave's or the test suite's -- so coverage instrumentation on a
+dependency or on the tests themselves never dilutes this project's own
+number."
+    (uiop:subpathnamep (uiop:parse-native-namestring file) (merge-pathnames "src/" root)))
+
+  (defun discard-ineligible-coverage-records (root)
     (let ((table (sb-cover::code-coverage-hashtable))
-          (discarded nil))
-      (maphash
-        (lambda (filename record)
-          (declare (ignore record))
-          (unless (member (namestring (truename filename)) source-names :test (function string=))
-            (push filename discarded)))
-        table)
-      (dolist (filename discarded)
-        (remhash filename table))))
-  (let ((root (source-root))
-        (output-directory (output-directory)))
-    (ensure-directories-exist output-directory)
-    (let ((*package* (find-package :asdf)))
-      (load (merge-pathnames #P"cl-concurrent-kit.asd" root)))
-    (format *error-output* "coverage: compile~%")
-    (finish-output *error-output*)
-    (asdf:compile-system "cl-concurrent-kit" :force t)
-    (format *error-output* "coverage: load~%")
-    (finish-output *error-output*)
+          (discarded-files nil))
+      (maphash (lambda (file coverage)
+                 (declare (ignore coverage))
+                 (unless (source-file-p file root)
+                   (push file discarded-files)))
+               table)
+      (dolist (file discarded-files)
+        (remhash file table))))
+
+  (let* ((root (source-root))
+         (output (output-directory)))
+    (configure-local-source-registry root)
+    (configure-isolated-output-cache output)
+    (declaim (optimize (sb-cover:store-coverage-data 3)))
     (asdf:load-system "cl-concurrent-kit" :force t)
-    (format *error-output* "coverage: test~%")
-    (finish-output *error-output*)
+    (declaim (optimize (sb-cover:store-coverage-data 0)))
     (asdf:test-system "cl-concurrent-kit")
-    (format *error-output* "coverage: report~%")
-    (finish-output *error-output*)
-    (let ((source-names (mapcar (function namestring) (source-files root))))
-      (discard-non-source-coverage-records source-names)
-      (sb-cover:report
-        (merge-pathnames #P"html/" output-directory)
-        :if-matches
-        (lambda (filename)
-          (member filename source-names :test (function string=))))
-      (sb-cover:lcov-report (merge-pathnames #P"lcov.info" output-directory)))
-    (format t "Coverage report written to ~A~%" output-directory)))
+    (discard-ineligible-coverage-records root)
+    (sb-cover:report (merge-pathnames "html/" output)
+                      :if-matches (lambda (file)
+                                    (source-file-p file root)))
+    (sb-cover:lcov-report (merge-pathnames "lcov.info" output))
+    (format t "Coverage reports written to ~A~%" output)
+    (uiop:quit 0)))

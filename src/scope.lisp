@@ -8,52 +8,52 @@
 ;;;;
 ;;;; cl-concurrent-kit cannot forcibly interrupt a running SBCL thread, so
 ;;;; cancellation here is cooperative: a scope trips a flag, and SPAWNed work
-;;;; must call CHECK-CANCELLED at points where stopping early is safe.
-(progn (declaim (optimize (speed 3) (safety 1) (debug 0) (compilation-speed 0) #+sb-cover (sb-c:store-coverage-data 3))) (in-package #:cl-concurrent-kit))
-
-(defun check-cancelled (scope)
-  "Signal TASK-CANCELLED if SCOPE has been cancelled -- because a sibling
-task failed, or because WITH-TASK-SCOPE's body exited abnormally. Call this
-periodically from within long-running SPAWNed work, at points where stopping
-early is safe."
-  (when (with-lock-held ((task-scope-lock scope)) (task-scope-cancelled-p scope))
-    (error 'task-cancelled :scope scope)))
-
-(defun %scope-signal-failures (scope)
-  (let ((failures
-        (with-lock-held ((task-scope-lock scope)) (reverse (task-scope-failures scope)))))
-    (when failures
-      (error 'scope-error :causes failures))))
+;;;; must call CHECK-CANCELLED at points where stopping early is safe. See
+;;;; src/scope-state.lisp for TASK-SCOPE's own bookkeeping and
+;;;; src/scope-execution.lisp for SPAWN's dispatch.
+(in-package #:cl-concurrent-kit)
 
 (defmacro with-task-scope ((scope-var &key timeout) &body body)
-  "Execute BODY with a lexical task scope and await its children before exit.
+  "Bind SCOPE-VAR to a fresh task scope and run BODY inline -- not through an
+intervening closure, so a CHECK-CANCELLED or SPAWN call in BODY is a direct
+call rather than one more indirection through a stored function -- for the
+dynamic extent of BODY. Every task started with (SPAWN SCOPE-VAR ...) is
+guaranteed to have finished before WITH-TASK-SCOPE returns.
 
-TIMEOUT bounds the cleanup wait in seconds. On expiry the scope is cancelled
-cooperatively and OPERATION-TIMED-OUT is signaled."
-  (let ((scope (gensym "SCOPE-"))
-        (timeout-var (gensym "TIMEOUT-"))
-        (body-completed-p (gensym "BODY-COMPLETED-P-"))
-        (results (gensym "RESULTS-")))
-    `(let ((,timeout-var ,timeout)
-           (,scope (%make-task-scope))
+TIMEOUT (seconds) bounds only the wait for already-running children once
+BODY itself has returned or signalled; on expiry every remaining child is
+cancelled cooperatively and OPERATION-TIMED-OUT is signaled.
+
+If BODY itself signals, that condition propagates after every child has been
+cancelled and awaited; if BODY returns normally but one or more children
+failed, WITH-TASK-SCOPE signals SCOPE-ERROR once they have all finished."
+  (let ((body-completed-p (gensym "BODY-COMPLETED-P"))
+        (results (gensym "RESULTS")))
+    `(let ((,scope-var (%make-task-scope))
            (,body-completed-p nil)
            (,results nil))
-       (let ((,scope-var ,scope))
-         (unwind-protect
-              (progn
-                (setf ,results
-                      (multiple-value-list
-                       (locally
-                         ,@body)))
-                (setf ,body-completed-p t))
-           (%scope-close ,scope)
-           (unless ,body-completed-p
-             (%scope-cancel ,scope))
-           (handler-case
-               (%scope-await-children ,scope :timeout ,timeout-var)
-             (operation-timed-out (condition)
-               (%scope-cancel ,scope)
-               (error condition))))
-         (when ,body-completed-p
-           (%scope-signal-failures ,scope)
-           (values-list ,results))))))
+       (unwind-protect
+           (progn
+             (setf ,results (multiple-value-list (locally ,@body)))
+             (setf ,body-completed-p t))
+         ;; Reached on both a normal return and a non-local exit from BODY.
+         ;; Close the scope first, so a child racing to SPAWN onto it right
+         ;; as BODY exits is rejected outright instead of possibly slipping
+         ;; in after %SCOPE-AWAIT-CHILDREN below has already taken its
+         ;; snapshot of "no children left".
+         (%scope-close ,scope-var)
+         ;; Only the abnormal-exit case trips cancellation here: a child that
+         ;; has already failed trips it itself (in SPAWN, above), and a body
+         ;; that simply returned while children are still running should let
+         ;; them finish on their own rather than being cancelled out from
+         ;; under it.
+         (unless ,body-completed-p
+           (%scope-cancel ,scope-var))
+         (handler-case
+             (%scope-await-children ,scope-var :timeout ,timeout)
+           (operation-timed-out (condition)
+             (%scope-cancel ,scope-var)
+             (error condition))))
+       (when ,body-completed-p
+         (%scope-signal-failures ,scope-var)
+         (values-list ,results)))))

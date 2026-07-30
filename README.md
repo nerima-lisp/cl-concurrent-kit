@@ -23,6 +23,12 @@ The source for that site lives in [docs/src/](docs/src/).
   (let ((f (cl-concurrent-kit:spawn scope (lambda () (+ 1 2)))))
     (cl-concurrent-kit:await f)))
 ;; => 3
+
+;; PROMISE-THEN composes promises by continuation, never by blocking:
+(cl-concurrent-kit:await
+ (cl-concurrent-kit:promise-then (cl-concurrent-kit:future (+ 1 2))
+                                  (lambda (value) (* value 10))))
+;; => 30
 ```
 
 ## Install
@@ -49,21 +55,36 @@ than follow the default branch.
 ```sh
 nix develop          # SBCL with CL_SOURCE_REGISTRY already set
 nix run .#test       # run the test suite
-nix run .#coverage -- ./coverage  # write HTML and LCOV coverage reports to ./coverage
-nix run .#benchmark -- 1000000  # report hot-path throughput as TSV
+nix build .#coverage # an sb-cover HTML report as the build's $out
+nix run .#benchmark -- 1000000  # report each primitive's round-trip overhead
 nix flake check      # tests + coverage + formatting + docs, the same gate CI uses
 nix fmt              # format Nix sources (treefmt)
 ```
 
-`benchmark` warms each workload, takes five post-GC samples, and reports the
-median TSV throughput for atomic-counter increment, a capacity-one buffered
-channel round trip, an immediately ready `SELECT` receive, and an executor
-submit/await round trip. Each workload validates its result. CI checks the
-output shape rather than a machine-specific throughput threshold; compare
-numbers only on like-for-like SBCL versions, CPU governors, and hardware.
+Outside Nix, `sbcl --script run-coverage.lisp [output-dir]` writes the same
+HTML report plus an `lcov.info` next to it, for tooling that reads LCOV
+directly; `nix flake check`'s `coverage-lcov` check runs the same script and
+additionally fails the build if any source file falls under this project's
+own coverage bar, rather than only rendering a number someone has to
+remember to look at.
+
+`sb-cover` instruments code as it runs, so a file's own `IN-PACKAGE` form, its
+`DEFSTRUCT` slot-default initializers, and any `DEFMACRO`'s body all run once
+at compile/macroexpansion time -- before `sb-cover` starts recording -- and
+show up as "not executed" no matter how many times their effect (a
+fully-covered `DEFINE-CONDITION`, a channel actually being locked) is
+exercised elsewhere. Chasing 100% on the *expression* column there would mean
+chasing the instrumentation, not the behavior; the *branch* column is the one
+worth holding at 100%.
 
 Tests live in `t/` and run under [cl-weave](https://github.com/nerima-lisp/cl-weave),
 the org's test framework.
+
+`nix develop -c sbcl --script benchmarks/run-benchmarks.lisp` reports each
+primitive's own round-trip overhead (channel send/recv, promise
+deliver/await, executor submit/await, scope spawn/await, ...) using
+cl-weave's `benchmark`, the same tool the org's other repositories use, so
+the numbers are directly comparable across them.
 
 ## Contributing
 

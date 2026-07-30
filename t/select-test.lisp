@@ -51,11 +51,26 @@
         :gave-up)
       (expect (recv full) :to-be :occupied)))
   (it
+    "runs :TIMEOUT without waiting when its deadline has already expired"
+    (let ((channel (make-channel :buffer-size 1)))
+      (expect
+        (select ((recv channel) (v) (list :recv v)) (:timeout 0 () :expired))
+        :to-be
+        :expired)))
+  (it
     "can select on a SEND clause"
     (let* ((channel (make-channel))
            (consumer (future (recv channel))))
       (expect (select ((send channel :sent-via-select) () :sent)) :to-be :sent)
       (expect (await consumer :timeout 1) :to-be :sent-via-select)))
+  (it
+    "does not choose an unready SEND clause; falls through to DEFAULT instead"
+    (let ((channel (make-channel :buffer-size 1)))
+      (send channel :occupies-the-only-slot)
+      (expect
+        (select ((send channel :blocked) () :sent) (:default () :fell-through))
+        :to-be
+        :fell-through)))
   (it
     "selects closed receives and signals for closed sends"
     (let ((channel (make-channel)))

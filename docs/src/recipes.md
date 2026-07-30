@@ -68,6 +68,64 @@ Use `SPAWN` to make each stage a tracked child of `WITH-TASK-SCOPE`. Pass
    :executor executor))
 ```
 
+## Waiting for every result, failures included
+
+`AWAIT` re-signals a failed promise's condition, so gathering several
+promises with a plain `MAPCAR` over `AWAIT` aborts on the first failure.
+`PROMISE-ALL-SETTLED` instead waits for every input to settle and hands back
+one `PROMISE-SETTLEMENT` per input, in order, regardless of outcome:
+
+```lisp
+(let ((settlements (cl-concurrent-kit:await
+                     (cl-concurrent-kit:promise-all-settled
+                      (mapcar (lambda (url) (cl-concurrent-kit:future (fetch url)))
+                              urls)))))
+  (loop for settlement in settlements
+        for url in urls
+        do (ecase (cl-concurrent-kit:promise-settlement-state settlement)
+             (:fulfilled (record-success url (cl-concurrent-kit:promise-settlement-value settlement)))
+             (:failed (record-failure url (cl-concurrent-kit:promise-settlement-condition settlement))))))
+```
+
+## Chaining promises without blocking
+
+`PROMISE-THEN` composes by continuation: each call registers a callback and
+returns a new promise immediately, so a chain never blocks the thread that
+builds it.
+
+```lisp
+(let* ((fetched (cl-concurrent-kit:future (fetch url)))
+       (parsed (cl-concurrent-kit:promise-then fetched #'parse-response))
+       (recorded (cl-concurrent-kit:promise-then
+                  parsed
+                  (lambda (value) (record value) value)
+                  (lambda (condition) (log-fetch-failure url condition) nil))))
+  (cl-concurrent-kit:await recorded))
+```
+
+The two-argument form of `PROMISE-THEN` propagates a failed input's condition
+unchanged; the three-argument form above intercepts it instead, so a fetch or
+parse failure is logged and turned into `NIL` rather than re-signaled to
+`AWAIT`.
+
+## Bounding how long a scope waits for stragglers
+
+`WITH-TASK-SCOPE`'s `:TIMEOUT` bounds only the cleanup wait -- the time
+between the body finishing (normally or by error) and every spawned child
+actually having stopped -- not the body itself:
+
+```lisp
+(handler-case
+    (cl-concurrent-kit:with-task-scope (scope :timeout 5)
+      (cl-concurrent-kit:spawn scope #'slow-cleanup-task))
+  (cl-concurrent-kit:operation-timed-out ()
+    (log-warning "a scope child did not honor cancellation within 5s")))
+```
+
+On expiry, every child still running is cancelled the same cooperative way a
+sibling failure would cancel them -- `CHECK-CANCELLED` is still what a child
+must call to actually notice.
+
 ## Cooperative cancellation inside a scope
 
 `CHECK-CANCELLED` only does anything at the point it is called, so call it
