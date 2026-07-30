@@ -46,7 +46,7 @@ rather than relying on this script's own store path."
 never cl-weave's or the test suite's -- so coverage instrumentation on a
 dependency or on the tests themselves never dilutes this project's own
 number."
-    (uiop:subpathnamep (uiop:parse-native-namestring file) (merge-pathnames "src/" root)))
+    (uiop:subpathp (uiop:parse-native-namestring file) (merge-pathnames "src/" root)))
 
   (defun discard-ineligible-coverage-records (root)
     (let ((table (sb-cover::code-coverage-hashtable))
