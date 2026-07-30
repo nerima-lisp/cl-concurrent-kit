@@ -1,6 +1,19 @@
 (progn
   #.(progn (require :asdf) (require :sb-cover) nil)
 
+  ;; If CI reports a failing `checks.coverage-lcov` that a local rebuild
+  ;; (e.g. `nix build .#checks.x86_64-linux.coverage-lcov`) can't reproduce,
+  ;; suspect the binary cache rather than this script: this is a plain
+  ;; input-addressed derivation, so once any one build -- flaky or not --
+  ;; populates Cachix for a given commit, every subsequent `nix flake check`
+  ;; substitutes that same cached output without re-running it. A build that
+  ;; happened to lose a scheduling race on a busy runner (coverage
+  ;; instrumentation over a threaded test suite is timing-sensitive) gets
+  ;; cached as gospel. Force a fresh build by changing this file, or purge
+  ;; the offending store path from the cache directly.
+
+
+
   (defun script-directory ()
     (make-pathname :name nil
                    :type nil
