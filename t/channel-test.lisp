@@ -30,7 +30,13 @@
       (send channel :a)
       (send channel :b)
       (expect (recv channel) :to-be :a)
-      (expect (recv channel) :to-be :b))))
+      (expect (recv channel) :to-be :b)))
+
+  (it-property "RECV returns every buffered value in the order it was SENT, for any batch"
+      ((values (gen-list (gen-integer :min -1000 :max 1000) :min-length 0 :max-length 32)))
+    (let ((channel (make-channel :buffer-size (max 1 (length values)))))
+      (dolist (value values) (send channel value))
+      (expect (loop repeat (length values) collect (recv channel)) :to-equal values))))
 
 (describe "closing a channel"
   (it "lets RECV drain already-buffered values, then reports closed"

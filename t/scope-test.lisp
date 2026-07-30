@@ -131,6 +131,22 @@
       (expect (mapcar (function simple-condition-format-control) causes)
               :to-equal (list "first failure" "second failure"))))
 
+  (it "signals OPERATION-TIMED-OUT when a child outlives WITH-TASK-SCOPE's :TIMEOUT"
+    (let ((started (make-semaphore)))
+      (signals operation-timed-out
+        (with-task-scope (scope :timeout 0.05d0)
+          (spawn scope
+                 (lambda ()
+                   (signal-semaphore started)
+                   (sleep 10)))
+          (unless (wait-on-semaphore started :timeout 1)
+            (error "scope child did not start"))))))
+
+  (it "does not signal OPERATION-TIMED-OUT when every child finishes within :TIMEOUT"
+    (expect (with-task-scope (scope :timeout 1)
+              (await (spawn scope (lambda () :fast))))
+            :to-be :fast))
+
   (it "trips CHECK-CANCELLED for a sibling after another task fails"
     (let ((started (make-semaphore))
           (cancelled (make-semaphore)))

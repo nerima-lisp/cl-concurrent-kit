@@ -3,7 +3,7 @@
 
 (describe "threads"
   (it "runs its function on another thread and JOIN-THREAD returns its value"
-    (let ((thread (make-thread (lambda () (+ 1 2)))))
+    (let ((thread (make-thread (lambda () (1+ 2)))))
       (expect (join-thread thread) :to-be 3)))
 
   (it "reports THREAD-ALIVE-P false once the thread's function has returned"

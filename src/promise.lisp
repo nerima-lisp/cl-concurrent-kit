@@ -142,6 +142,30 @@ aggregate promise."
                           (deliver aggregate (coerce settlements 'list))))))))))
     aggregate))
 
+(defun promise-then (promise on-fulfilled &optional on-rejected)
+  "Register ON-FULFILLED and ON-REJECTED as PROMISE's continuations and
+return a new PROMISE for whichever one runs -- explicit continuation-passing
+style built directly on %OBSERVE-PROMISE's own callback: PROMISE-THEN never
+blocks, never spawns a thread, and settles its result promise from whatever
+thread settles PROMISE (immediately, inline, if PROMISE is already settled).
+
+Called with PROMISE's value, ON-FULFILLED's return value fulfills the result;
+an error it signals fails it instead. ON-REJECTED, if supplied, is called
+with the condition DELIVER-ERROR settled PROMISE with and its return value
+fulfills the result; if omitted, a failed PROMISE simply propagates its
+condition to the result unchanged."
+  (let ((next (make-promise)))
+    (%observe-promise
+     promise
+     (lambda (state outcome)
+       (handler-case
+           (deliver next
+                    (ecase state
+                      (:fulfilled (funcall on-fulfilled outcome))
+                      (:failed (if on-rejected (funcall on-rejected outcome) (error outcome)))))
+         (error (condition) (deliver-error next condition)))))
+    next))
+
 (defmacro future (&body body)
   "Run BODY on a new thread and return a PROMISE for its outcome immediately.
 AWAIT on the result blocks until BODY finishes and returns its value, or

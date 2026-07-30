@@ -5,13 +5,14 @@
 set of primitives a portability layer like bordeaux-threads would offer
 (threads, locks, condition variables, semaphores), then builds the
 higher-level concurrency shapes found in modern languages on top of them:
-promises/futures (JS/Rust), CSP channels with a Go-style SELECT (Go/Kotlin), a
+promises/futures with explicit continuation-passing composition via
+PROMISE-THEN (JS/Rust), CSP channels with a Go-style SELECT (Go/Kotlin), a
 fixed-size executor (Java), and structured concurrency scopes with cooperative
 cancellation (Kotlin/Swift/Python trio)."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.2.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")
@@ -22,10 +23,12 @@ cancellation (Kotlin/Swift/Python trio)."
   ((:file "package")
    (:file "conditions")
    (:file "primitives")
+   (:file "fifo")
    (:file "promise")
    (:file "channel")
    (:file "select")
    (:file "executor")
+   (:file "scope-state")
    (:file "scope"))
   :in-order-to ((test-op (test-op "cl-concurrent-kit/test"))))
 
@@ -36,7 +39,7 @@ cancellation (Kotlin/Swift/Python trio)."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.2.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")
@@ -45,6 +48,7 @@ cancellation (Kotlin/Swift/Python trio)."
   :serial t
   :components
   ((:file "package")
+   (:file "conditions-test")
    (:file "primitives-test")
    (:file "promise-test")
    (:file "channel-test")

@@ -58,6 +58,50 @@
           (expect (cl-concurrent-kit:promise-settlement-condition (second settlements))
                 :to-be condition)))))
 
+(describe "promise-then"
+  (it "calls ON-FULFILLED with an already-settled promise's value as its continuation"
+    (let ((promise (make-promise)))
+      (deliver promise 21)
+      (with-continuation-result (value next)
+          (promise-then promise (lambda (v) (next (* v 2))))
+        (expect value :to-be 42))))
+
+  (it "settles the returned promise with ON-FULFILLED's return value"
+    (let ((promise (make-promise)))
+      (deliver promise 21)
+      (expect (await (promise-then promise (lambda (v) (* v 2)))) :to-be 42)))
+
+  (it "runs ON-REJECTED, not ON-FULFILLED, when the input promise fails"
+    (let ((promise (make-promise))
+          (condition (make-condition 'error)))
+      (deliver-error promise condition)
+      (expect (await (promise-then promise
+                                    (lambda (v) (declare (ignore v)) :wrong-branch)
+                                    (lambda (c) (list :caught (eq c condition)))))
+              :to-equal (list :caught t))))
+
+  (it "propagates the input promise's failure unchanged when ON-REJECTED is omitted"
+    (let ((promise (make-promise))
+          (condition (make-condition 'simple-error :format-control "boom")))
+      (deliver-error promise condition)
+      (let ((chained (promise-then promise (lambda (v) (declare (ignore v)) :wrong-branch))))
+        (handler-case
+            (progn (await chained) (error "AWAIT should have re-signaled"))
+          (error (c) (expect (eq c condition) :to-be-truthy))))))
+
+  (it "fails the returned promise when ON-FULFILLED itself signals"
+    (let ((promise (make-promise)))
+      (deliver promise 1)
+      (let ((chained (promise-then promise (lambda (v) (declare (ignore v)) (error "in handler")))))
+        (signals error (await chained)))))
+
+  (it "settles the returned promise once a not-yet-settled input promise later delivers"
+    (let* ((promise (make-promise))
+           (chained (promise-then promise (lambda (v) (1+ v)))))
+      (expect (promise-settled-p chained) :to-be nil)
+      (deliver promise 41)
+      (expect (await chained :timeout 1) :to-be 42))))
+
 (describe "future"
   (it "runs its body on another thread and AWAIT resolves to its value"
     (expect (await (future (+ 1 2 3))) :to-be 6))

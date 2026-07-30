@@ -149,3 +149,26 @@ touching LOCK-protected state."
                               (float internal-time-units-per-second 0.0d0))))))
       (unless (condition-wait condition-variable lock :timeout timeout)
         (return :timeout)))))
+
+(defmacro %with-deadline-wait ((result-var condition-variable lock predicate deadline
+                                timeout operation)
+                               &body body)
+  "Bind RESULT-VAR to (%WAIT-UNTIL CONDITION-VARIABLE LOCK PREDICATE DEADLINE)
+and run BODY. If %WAIT-UNTIL times out, signal OPERATION-TIMED-OUT naming
+OPERATION and TIMEOUT instead of running BODY at all.
+
+DEADLINE and TIMEOUT are taken separately, not derived from one another here,
+because a caller that waits more than once against the same overall budget --
+CHANNEL's unbuffered SEND is the one in this codebase -- must compute
+%DEADLINE-FROM-TIMEOUT exactly once and reuse it, while TIMEOUT (the original
+seconds value) is needed again on every wait purely to report it. Callers
+that wait only once typically write DEADLINE as
+`(%deadline-from-timeout TIMEOUT)` inline.
+
+LOCK must be held by the caller exactly as %WAIT-UNTIL requires; per its own
+contract, LOCK is no longer held after a timeout, so BODY -- which does not
+run in that case -- never needs to account for it."
+  `(let ((,result-var (%wait-until ,condition-variable ,lock ,predicate ,deadline)))
+     (when (eq ,result-var :timeout)
+       (error 'operation-timed-out :operation ,operation :timeout ,timeout))
+     ,@body))

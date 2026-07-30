@@ -23,6 +23,12 @@ The source for that site lives in [docs/src/](docs/src/).
   (let ((f (cl-concurrent-kit:spawn scope (lambda () (+ 1 2)))))
     (cl-concurrent-kit:await f)))
 ;; => 3
+
+;; PROMISE-THEN composes promises by continuation, never by blocking:
+(cl-concurrent-kit:await
+ (cl-concurrent-kit:promise-then (cl-concurrent-kit:future (+ 1 2))
+                                  (lambda (value) (* value 10))))
+;; => 30
 ```
 
 ## Install
@@ -49,10 +55,14 @@ than follow the default branch.
 ```sh
 nix develop          # SBCL with CL_SOURCE_REGISTRY already set
 nix run .#test       # run the test suite
-nix run .#coverage   # write HTML and LCOV coverage reports to ./coverage
-nix flake check      # tests + formatting + docs, the same gate CI uses
+nix build .#coverage # an sb-cover HTML report as the build's $out
+nix flake check      # tests + formatting + docs + coverage, the same gate CI uses
 nix fmt              # format Nix sources (treefmt)
 ```
+
+Outside Nix, `sbcl --script run-coverage.lisp [output-dir]` writes the same
+HTML report plus an `lcov.info` next to it, for tooling that reads LCOV
+directly.
 
 Tests live in `t/` and run under [cl-weave](https://github.com/nerima-lisp/cl-weave),
 the org's test framework.

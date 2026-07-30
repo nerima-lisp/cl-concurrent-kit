@@ -4,7 +4,9 @@
   ;; DESCRIBE clashes with CL:DESCRIBE; nothing else needs shadowing.
   (:shadowing-import-from #:cl-weave #:describe)
   (:import-from #:cl-weave
-   #:it #:expect #:signals #:run-all)
+   #:it #:expect #:signals #:run-all
+   #:it-property #:gen-integer #:gen-list
+   #:with-continuation-result)
   (:import-from #:cl-concurrent-kit
    ;; Threads / locks / condition variables / semaphores / atomics
    #:make-thread #:current-thread #:thread-alive-p #:join-thread
@@ -13,7 +15,7 @@
    #:make-semaphore #:wait-on-semaphore #:signal-semaphore
    #:make-atomic-counter #:atomic-counter-value #:atomic-counter-incf #:atomic-counter-decf
    ;; Promises / futures
-   #:make-promise #:promise-settled-p #:deliver #:deliver-error #:await #:future
+   #:make-promise #:promise-settled-p #:deliver #:deliver-error #:await #:promise-then #:future
    ;; Channels
    #:make-channel #:send #:recv #:try-send #:try-recv #:close-channel #:channel-closed-p
    ;; Select
