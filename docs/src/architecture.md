@@ -72,3 +72,83 @@ computed remaining timeout, if any -- when nothing was ready.
 Cancellation is cooperative rather than forced because cl-concurrent-kit has
 no safe way to interrupt an arbitrary running SBCL thread; `CHECK-CANCELLED`
 is the hook a long-running task calls at a point where stopping is safe.
+`WITH-TASK-SCOPE` accepts an optional `:TIMEOUT` (seconds) bounding only the
+wait for already-running children once the body itself has finished; on
+expiry every remaining child is cancelled the same cooperative way and
+`OPERATION-TIMED-OUT` is signaled. `TASK-SCOPE`'s own bookkeeping (the
+struct, child registration, cancellation) lives in `src/scope-state.lisp`;
+`src/scope.lisp` is `SPAWN`'s dispatch and the `WITH-TASK-SCOPE` macro itself,
+which runs its body inline via `LOCALLY` rather than through an intervening
+closure -- one fewer indirection between a `CHECK-CANCELLED` or `SPAWN` call
+in the body and the call itself.
+
+`SPAWN-CHILD` itself is only the two-way dispatch: `%SPAWN-EXECUTOR-CHILD`
+queues on an `EXECUTOR` and wires its cancellation through
+`%EXECUTOR-TASK-CANCEL` so a still-queued task reacts to scope cancellation
+exactly as a running one does; `%SPAWN-THREAD-CHILD` runs on a dedicated
+thread via `%DELIVER-ON-THREAD` (`src/promise.lisp`), the same
+run-a-thunk-on-a-thread-and-settle-a-promise primitive `FUTURE` uses.
+
+## One lock per struct, one macro per lock
+
+`CHANNEL`, `%WORK-QUEUE`, and `TASK-SCOPE` each guard their own mutable state
+with a lock living in a slot of the same struct. Rather than every caller
+spelling out `(WITH-LOCK-HELD ((CHANNEL-LOCK CHANNEL)) ...)` by hand,
+`%WITH-CHANNEL-LOCK`, `%WITH-WORK-QUEUE-LOCK`, and `%WITH-SCOPE-LOCK` (one
+per file, next to the struct they wrap) name the operation once each --
+"hold this object's own lock" -- and every operation on that struct expands
+through it instead.
+
+## One deadline-wait shape, one macro
+
+`AWAIT`, `SEND`, `RECV`, and `WITH-TASK-SCOPE`'s child wait all follow the
+same shape: compute a deadline once from a `:TIMEOUT` in seconds, block on
+`%WAIT-UNTIL` until a predicate is satisfied or the deadline passes, and
+signal `OPERATION-TIMED-OUT` on the latter. `src/primitives.lisp`'s
+`%WITH-DEADLINE-WAIT` macro is that shape written once; every caller supplies
+only what actually varies -- the condition variable, the lock, the predicate,
+and the operation keyword the resulting condition names. `src/channel.lisp`'s
+unbuffered `SEND` calls it twice against one shared deadline (see its own
+comment for why the deadline, not the timeout, is what must not be
+recomputed between the two waits).
+
+## PROMISE-THEN and PROMISE-RACE: continuation-passing composition without blocking
+
+`src/promise.lisp` is the core write-once cell (`MAKE-PROMISE`,
+`DELIVER`/`DELIVER-ERROR`, `AWAIT`, and the thread-spawning `FUTURE`);
+`src/promise-combinators.lisp` is everything that derives a new promise from
+existing ones (`PROMISE-ALL-SETTLED`, `PROMISE-RACE`, `PROMISE-THEN`) --
+the same split `src/scope-state.lisp`/`src/scope.lisp` and
+`src/fifo.lisp`/`src/channel.lisp` already make between a layer's own state
+and what is built on top of it.
+
+`PROMISE-THEN` is built directly on the same
+continuation-registration primitive `PROMISE-ALL-SETTLED` already used
+internally (`%OBSERVE-PROMISE`): register a callback to run once a promise
+settles, called synchronously by whichever thread does the settling -- or
+immediately, inline, if the promise is already settled. `PROMISE-THEN` wraps
+that in the familiar `.then()` shape (fulfilled/rejected continuations,
+returning a new promise for whichever one ran) without introducing a thread,
+a queue, or any blocking wait: the composition is the continuation passing
+itself.
+
+`PROMISE-RACE` is the same composition aimed at a different shape:
+`%OBSERVE-PROMISE` on every input, a lock-guarded flag so only the first
+callback to run actually settles the result, every later one silently
+discarded instead of raising `PROMISE-ALREADY-FULFILLED`. Still no thread, no
+queue, no polling -- whichever input's own settling thread gets there first
+does the result's settling too.
+
+## Why SRC/PACKAGE.LISP declaims SPEED 0
+
+`src/package.lisp` proclaims `(optimize (speed 0) ...)` globally, and that
+declaim carries a load-bearing comment explaining why: at SBCL 2.6.0's
+default `SPEED 1`, compiling this system in one image -- specifically the
+`SPAWN`/`SPAWN-CHILD`/`%SPAWN-EXECUTOR-CHILD` dispatch in `src/scope.lisp`,
+once `src/select.lisp`, `src/executor.lisp`, and `src/scope-state.lisp` have
+all already contributed type information to the same compilation -- triggers
+a constraint-propagation pathology in SBCL's compiler that does not return in
+any practical time. Every operation in this library is dominated by a mutex
+acquisition or an OS-level wait, so `SPEED` was never the bottleneck a caller
+could measure; trading it for a compiler that terminates costs nothing real.
+See the declaim's own comment for the bisection that isolated it.

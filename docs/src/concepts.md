@@ -15,6 +15,13 @@ value or re-signals the delivered condition, preserving its type so
 `FUTURE` is sugar for "make a promise, spawn a thread that settles it with
 its body's outcome, return the promise immediately".
 
+`PROMISE-THEN` composes promises by continuation-passing rather than by
+blocking: `(PROMISE-THEN PROMISE ON-FULFILLED ON-REJECTED)` registers both
+callbacks and returns a new promise for whichever one runs, settled from
+whatever thread settles `PROMISE` -- immediately, inline, if `PROMISE` is
+already settled. Chaining several calls builds a pipeline no thread ever
+blocks to construct; only the final `AWAIT` blocks, if anything does.
+
 ## Channels: buffered vs. unbuffered
 
 `(MAKE-CHANNEL :BUFFER-SIZE 0)` (the default) is a true CSP rendezvous: `SEND`
@@ -56,7 +63,10 @@ a new thread and returns a `PROMISE` for it. The scope guarantees:
 
 - **No child outlives the scope.** `WITH-TASK-SCOPE` does not return until
   every `SPAWN`ed thread has finished, whether it succeeded, failed, or is
-  still running when the body itself throws.
+  still running when the body itself throws -- or until an optional
+  `:TIMEOUT` (seconds) elapses waiting for stragglers, at which point
+  `OPERATION-TIMED-OUT` is signaled instead and every remaining child is
+  cancelled the same cooperative way a sibling failure would cancel them.
 - **A child's failure is never silently dropped.** If the body returns
   normally but one or more children failed, `WITH-TASK-SCOPE` signals
   `SCOPE-ERROR` with every failure's condition in `SCOPE-ERROR-CAUSES`.

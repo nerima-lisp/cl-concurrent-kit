@@ -3,7 +3,7 @@
 
 (describe "threads"
   (it "runs its function on another thread and JOIN-THREAD returns its value"
-    (let ((thread (make-thread (lambda () (+ 1 2)))))
+    (let ((thread (make-thread (lambda () (1+ 2)))))
       (expect (join-thread thread) :to-be 3)))
 
   (it "reports THREAD-ALIVE-P false once the thread's function has returned"
@@ -19,7 +19,17 @@
         (setf go-p t)
         (condition-notify cv))
       (join-thread thread)
-      (expect (thread-alive-p thread) :to-be nil))))
+      (expect (thread-alive-p thread) :to-be nil)))
+  (it "CURRENT-THREAD and THREAD-NAME identify the calling thread from within it"
+    (let ((observed-thread nil)
+          (observed-name nil))
+      (join-thread
+       (make-thread (lambda ()
+                      (setf observed-thread (current-thread))
+                      (setf observed-name (thread-name (current-thread))))
+                    :name "cl-concurrent-kit primitives test thread"))
+      (expect (thread-name observed-thread) :to-equal "cl-concurrent-kit primitives test thread")
+      (expect observed-name :to-equal "cl-concurrent-kit primitives test thread"))))
 
 (describe "locks"
   (it "serializes access so concurrent increments are not lost"

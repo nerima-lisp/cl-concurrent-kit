@@ -18,15 +18,19 @@
   (fifo (make-fifo) :read-only t)
   (closed-p nil))
 
+(defmacro %with-work-queue-lock ((queue) &body body)
+  "Hold QUEUE's own lock for the dynamic extent of BODY."
+  `(with-lock-held ((%work-queue-lock ,queue)) ,@body))
+
 (defun %work-queue-push (queue task)
-  (with-lock-held ((%work-queue-lock queue))
+  (%with-work-queue-lock (queue)
     (fifo-push (%work-queue-fifo queue) task)
     (condition-notify (%work-queue-condition-variable queue))))
 
 (defun %work-queue-pop (queue)
   "Block until a task is available or QUEUE is closed and drained. Returns
 (VALUES TASK T) or (VALUES NIL NIL)."
-  (with-lock-held ((%work-queue-lock queue))
+  (%with-work-queue-lock (queue)
     (loop until (or (not (fifo-empty-p (%work-queue-fifo queue))) (%work-queue-closed-p queue))
           do (condition-wait (%work-queue-condition-variable queue) (%work-queue-lock queue)))
     (if (fifo-empty-p (%work-queue-fifo queue))
@@ -84,12 +88,20 @@ will be submitted so the workers can exit."
   (promise nil :read-only t)
   (on-cancel nil :read-only t))
 
+(defmacro %with-pending-transition ((task new-state transitioned-var) &body body)
+  "Atomically transition TASK from :PENDING to NEW-STATE under its own lock,
+bind TRANSITIONED-VAR to whether that transition happened -- another thread
+may have already run or cancelled TASK first -- and run BODY, which decides
+what a won and a lost race each do."
+  `(let ((,transitioned-var
+           (with-lock-held ((%executor-task-lock ,task))
+             (when (eq (%executor-task-state ,task) :pending)
+               (setf (%executor-task-state ,task) ,new-state)
+               t))))
+     ,@body))
+
 (defun %executor-task-run (task)
-  (let ((run-p nil))
-    (with-lock-held ((%executor-task-lock task))
-      (when (eq (%executor-task-state task) :pending)
-        (setf (%executor-task-state task) :running
-              run-p t)))
+  (%with-pending-transition (task :running run-p)
     (when run-p
       (handler-case (deliver (%executor-task-promise task)
                              (funcall (%executor-task-thunk task)))
@@ -97,11 +109,7 @@ will be submitted so the workers can exit."
           (deliver-error (%executor-task-promise task) condition))))))
 
 (defun %executor-task-cancel (task condition)
-  (let ((cancel-p nil))
-    (with-lock-held ((%executor-task-lock task))
-      (when (eq (%executor-task-state task) :pending)
-        (setf (%executor-task-state task) :cancelled
-              cancel-p t)))
+  (%with-pending-transition (task :cancelled cancel-p)
     (when cancel-p
       (deliver-error (%executor-task-promise task) condition)
       (when (%executor-task-on-cancel task)
@@ -116,7 +124,7 @@ will be submitted so the workers can exit."
 
 (defun %work-queue-close (queue cancel-pending)
   (let ((cancelled-tasks nil))
-    (with-lock-held ((%work-queue-lock queue))
+    (%with-work-queue-lock (queue)
       (when cancel-pending
         (loop until (fifo-empty-p (%work-queue-fifo queue))
               do (push (fifo-pop (%work-queue-fifo queue)) cancelled-tasks)))

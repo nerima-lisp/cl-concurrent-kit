@@ -18,15 +18,6 @@
   ;; Observers are called after settlement has released LOCK.
   (observers nil))
 
-(defstruct (promise-settlement
-    (:constructor %make-promise-settlement (state value condition))) "The outcome of one input to PROMISE-ALL-SETTLED.
-
-STATE is either :FULFILLED or :FAILED.  VALUE is meaningful for fulfilled
-settlements, and CONDITION is meaningful for failed settlements."
-  (state :fulfilled :read-only t)
-  (value nil :read-only t)
-  (condition nil :read-only t))
-
 (defun make-promise ()
   "Create a PROMISE with no value yet. Settle it with DELIVER or
 DELIVER-ERROR; read it with AWAIT."
@@ -104,44 +95,6 @@ with, or re-signal the condition DELIVER-ERROR was called with. With TIMEOUT
         (:fulfilled (promise-value promise))
         (:failed (error (promise-failure promise)))))))
 
-(defun promise-all-settled (promises)
-  "Return a PROMISE fulfilled after every PROMISE in PROMISES settles.
-
-Its value is a list of PROMISE-SETTLEMENT records in the same order as
-PROMISES.  Failed inputs produce :FAILED records instead of failing the
-aggregate promise."
-  (let* ((promises (coerce promises 'list))
-         (count (length promises))
-         (aggregate (make-promise)))
-    (dolist (promise promises)
-      (check-type promise promise))
-    (if (zerop count) (deliver aggregate nil)
-      (let ((lock (make-lock :name "cl-concurrent-kit promise all settled"))
-            (remaining count)
-            (settlements (make-array count)))
-        (loop for promise in promises
-              for index from 0
-              do (let ((index index))
-                   ;; LOOP's FOR mutates one binding of INDEX in place rather
-                   ;; than creating a fresh one per iteration, so the closure
-                   ;; below needs its own copy -- otherwise every observer
-                   ;; would write to whatever INDEX the loop had reached by
-                   ;; the time a promise actually settled, not the slot it
-                   ;; was registered for.
-                   (%observe-promise
-                    promise
-                    (lambda (state outcome)
-                      (let (complete)
-                        (with-lock-held
-                          (lock)
-                          (setf (aref settlements index) (ecase state
-                              (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
-                              (:failed (%make-promise-settlement :failed nil outcome))))
-                          (setf complete (zerop (decf remaining))))
-                        (when complete
-                          (deliver aggregate (coerce settlements 'list))))))))))
-    aggregate))
-
 (defmacro future (&body body)
   "Run BODY on a new thread and return a PROMISE for its outcome immediately.
 AWAIT on the result blocks until BODY finishes and returns its value, or
@@ -150,13 +103,20 @@ re-signals whatever condition BODY let escape."
     (lambda ()
       ,@body)))
 
+(defun %deliver-on-thread (promise thunk &key name)
+  "Run THUNK on a new thread named NAME, settling PROMISE with its return
+value via DELIVER, or with the condition it signals via DELIVER-ERROR.
+Returns PROMISE immediately, without waiting for THUNK to run.
+
+Shared by %FUTURE (a fresh PROMISE) and SRC/SCOPE.LISP's
+%SPAWN-THREAD-CHILD (a PROMISE SPAWN already created), the two places this
+package hands a thunk to a dedicated thread rather than an EXECUTOR."
+  (make-thread
+   (lambda ()
+     (handler-case (deliver promise (funcall thunk))
+       (error (condition) (deliver-error promise condition))))
+   :name name)
+  promise)
+
 (defun %future (thunk)
-  (let ((promise (make-promise)))
-    (make-thread
-      (lambda ()
-        (handler-case (deliver promise (funcall thunk))
-          (error (c)
-            (deliver-error promise c))))
-      :name
-      "cl-concurrent-kit future")
-    promise))
+  (%deliver-on-thread (make-promise) thunk :name "cl-concurrent-kit future"))
