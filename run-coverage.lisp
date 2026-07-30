@@ -53,7 +53,15 @@ number."
           (discarded-files nil))
       (maphash (lambda (file coverage)
                  (declare (ignore coverage))
-                 (unless (source-file-p file root)
+                 ;; PACKAGE.LISP is declarations only (verify-lcov.pl's own
+                 ;; comment). It used to emit no DA records at all; now that
+                 ;; it is large enough for SB-COVER to record per-line DA
+                 ;; entries, every one of them is 0-hit, which would leave it
+                 ;; with zero *countable* DA rows and trip verify-lcov.pl's
+                 ;; "every SF record has at least one real DA row" check.
+                 ;; Drop it here instead of trying to special-case that.
+                 (unless (and (source-file-p file root)
+                              (string/= (file-namestring file) "package.lisp"))
                    (push file discarded-files)))
                table)
       (dolist (file discarded-files)
@@ -63,9 +71,23 @@ number."
          (output (output-directory)))
     (configure-local-source-registry root)
     (configure-isolated-output-cache output)
+    ;; Without this, compiled FASLs carry only source PATHS, not the
+    ;; byte-offset locations/line lengths LCOV-REPORT needs to compute
+    ;; per-line state without re-reading source -- SB-COVER:REPORT's HTML
+    ;; output re-reads the file directly and works either way, but
+    ;; LCOV-REPORT does not and signals a TYPE-ERROR (NIL is not of type
+    ;; VECTOR) without it.
+    (sb-cover:enable-coverage-logging)
     (declaim (optimize (sb-cover:store-coverage-data 3)))
     (asdf:load-system "cl-concurrent-kit" :force t)
     (declaim (optimize (sb-cover:store-coverage-data 0)))
+    ;; :FORCE T here too: cl-weave's own Nix package ships precompiled FASLs
+    ;; alongside its sources with the same store-normalized timestamp as
+    ;; those sources, so ASDF's ordinary freshness check can treat one as
+    ;; already up to date and load it before the file defining its package
+    ;; has run, signaling PACKAGE-DOES-NOT-EXIST. Forcing a from-source
+    ;; recompile into our own isolated output cache sidesteps that.
+    (asdf:load-system "cl-weave" :force t)
     (asdf:test-system "cl-concurrent-kit")
     (discard-ineligible-coverage-records root)
     (sb-cover:report (merge-pathnames "html/" output)

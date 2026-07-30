@@ -137,6 +137,10 @@
                   pkgs.perl
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+                # run-coverage.lisp runs cl-concurrent-kit/test (ASDF:TEST-SYSTEM)
+                # to gather coverage, which depends on cl-weave -- same
+                # source-registry requirement as checks.benchmark above.
+                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//";
               }
               ''
                 export HOME="$TMPDIR/home"

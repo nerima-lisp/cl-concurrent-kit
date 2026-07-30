@@ -268,7 +268,7 @@
                     :name
                     name))))
             (signals simple-error (make-executor :size 2))
-            (expect (wait-on-semaphore stopped :timeout 1) :to-be t))
+            (expect (wait-on-semaphore stopped :timeout 1) :to-be-truthy))
           (setf (symbol-function (quote cl-concurrent-kit:make-thread)) original-make-thread))))))
 
 (describe

@@ -3,7 +3,7 @@ use File::Basename qw(basename);
 
 my ($lcov_file, $source_root) = @ARGV;
 die "Usage: verify-lcov.pl LCOV-FILE SOURCE-ROOT\n"
-  unless defined $lcov_file && defined $source_root && !@ARGV;
+  unless defined $lcov_file && defined $source_root && @ARGV == 2;
 
 # PACKAGE.LISP contains package/declaration forms only. SB-COVER does not
 # emit an executable record for it, so every other implementation file must
@@ -28,50 +28,63 @@ my %seen_source;
 # locations that have no executable instrumentation. Keep this finite list
 # audited: a source change must update it rather than silently widening it.
 my %non_executable_da = map { $_ => 1 } qw(
-  conditions.lisp:3 conditions.lisp:4 conditions.lisp:6 conditions.lisp:7
-  conditions.lisp:8 conditions.lisp:9 conditions.lisp:10 conditions.lisp:11
-  primitives.lisp:10 primitives.lisp:11 primitives.lisp:12 primitives.lisp:13
-  primitives.lisp:36 primitives.lisp:79 primitives.lisp:101 primitives.lisp:139
-  fifo.lisp:2 fifo.lisp:3 fifo.lisp:4 fifo.lisp:5 fifo.lisp:6 fifo.lisp:7
-  fifo.lisp:8 fifo.lisp:11 fifo.lisp:12 fifo.lisp:13 fifo.lisp:14 fifo.lisp:15
-  fifo.lisp:16
-  promise.lisp:9 promise.lisp:10 promise.lisp:11 promise.lisp:12 promise.lisp:13
-  promise.lisp:14 promise.lisp:15 promise.lisp:17 promise.lisp:18 promise.lisp:19
-  promise.lisp:20 promise.lisp:21 promise.lisp:22 promise.lisp:23 promise.lisp:24
-  promise.lisp:25 promise.lisp:26 promise.lisp:31 promise.lisp:32 promise.lisp:33
-  promise.lisp:34 promise.lisp:35
-  channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13 channel.lisp:14
-  channel.lisp:15 channel.lisp:16 channel.lisp:21 channel.lisp:22 channel.lisp:23
-  channel.lisp:24 channel.lisp:25 channel.lisp:26 channel.lisp:20 channel.lisp:27
-  channel.lisp:28 channel.lisp:29 channel.lisp:30 channel.lisp:31 channel.lisp:32
-  channel.lisp:33 channel.lisp:34 channel.lisp:35 channel.lisp:36 channel.lisp:37
-  channel.lisp:38 channel.lisp:39 channel.lisp:40 channel.lisp:41 channel.lisp:43
-  channel.lisp:44 channel.lisp:45 channel.lisp:47
-  channel.lisp:55 channel.lisp:56 channel.lisp:57 channel.lisp:58
-  channel.lisp:61 channel.lisp:62 channel.lisp:63 channel.lisp:64 channel.lisp:65
-  channel.lisp:66 channel.lisp:67 channel.lisp:68 channel.lisp:69 channel.lisp:70
-  channel.lisp:71 channel.lisp:72 channel.lisp:73 channel.lisp:74 channel.lisp:75
-  channel.lisp:76 channel.lisp:77 channel.lisp:78 channel.lisp:79 channel.lisp:80
-  channel.lisp:81 channel.lisp:82 channel.lisp:83 channel.lisp:84 channel.lisp:85
-  channel.lisp:86 channel.lisp:87 channel.lisp:88 channel.lisp:89 channel.lisp:90
-  channel.lisp:91 channel.lisp:92 channel.lisp:93 channel.lisp:94 channel.lisp:95
-  channel.lisp:96 channel.lisp:97 channel.lisp:98 channel.lisp:101 channel.lisp:102
-  channel.lisp:103
-  select.lisp:10 select.lisp:11 select.lisp:12 select.lisp:13 select.lisp:14
-  select.lisp:15 select.lisp:16 select.lisp:48 select.lisp:62 select.lisp:68 select.lisp:100
-  select.lisp:101 select.lisp:102
-  executor.lisp:7 executor.lisp:8 executor.lisp:9 executor.lisp:10 executor.lisp:11
-  executor.lisp:12 executor.lisp:13 executor.lisp:20 executor.lisp:21 executor.lisp:22
-  executor.lisp:23 executor.lisp:24 executor.lisp:25 executor.lisp:26 executor.lisp:55
-  executor.lisp:56 executor.lisp:89 executor.lisp:104 executor.lisp:105 executor.lisp:106
-  executor.lisp:107 executor.lisp:108
-  scope-state.lisp:2 scope-state.lisp:3 scope-state.lisp:4 scope-state.lisp:5
-  scope-state.lisp:6 scope-state.lisp:7 scope-state.lisp:8 scope-state.lisp:10
-  scope-state.lisp:11 scope-state.lisp:12 scope-state.lisp:13 scope-state.lisp:14
-  scope-state.lisp:15 scope-state.lisp:16 scope-state.lisp:17 scope-state.lisp:18
-  scope-execution.lisp:2 scope-execution.lisp:3 scope-execution.lisp:4
-  scope-execution.lisp:5 scope-execution.lisp:6 scope-execution.lisp:7 scope-execution.lisp:8
-  scope.lisp:12
+  conditions.lisp:8 conditions.lisp:10 conditions.lisp:11 conditions.lisp:12 conditions.lisp:13
+  conditions.lisp:15 conditions.lisp:16 conditions.lisp:17 conditions.lisp:18 conditions.lisp:19
+  conditions.lisp:20 conditions.lisp:22 conditions.lisp:23 conditions.lisp:24 conditions.lisp:25
+  conditions.lisp:26 conditions.lisp:27 conditions.lisp:28 conditions.lisp:29 conditions.lisp:30
+  conditions.lisp:31 conditions.lisp:32 conditions.lisp:33 conditions.lisp:34 conditions.lisp:35
+  conditions.lisp:36
+  primitives.lisp:9 primitives.lisp:30 primitives.lisp:73 primitives.lisp:95 primitives.lisp:141
+  fifo.lisp:12 fifo.lisp:15 fifo.lisp:16 fifo.lisp:17 fifo.lisp:18
+  fifo.lisp:21 fifo.lisp:22
+  promise.lisp:8 promise.lisp:11 promise.lisp:12 promise.lisp:13 promise.lisp:14
+  promise.lisp:15 promise.lisp:16 promise.lisp:21 promise.lisp:22
+  promise-combinators.lisp:9 promise-combinators.lisp:16 promise-combinators.lisp:17 promise-combinators.lisp:18
+  channel.lisp:9 channel.lisp:12 channel.lisp:13 channel.lisp:14 channel.lisp:15
+  channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19 channel.lisp:20
+  channel.lisp:21 channel.lisp:22 channel.lisp:25 channel.lisp:26 channel.lisp:27
+  channel.lisp:28 channel.lisp:34 channel.lisp:35 channel.lisp:41 channel.lisp:42
+  channel.lisp:44 channel.lisp:45 channel.lisp:46 channel.lisp:48 channel.lisp:49
+  channel.lisp:50 channel.lisp:51 channel.lisp:53 channel.lisp:60 channel.lisp:61
+  channel.lisp:62 channel.lisp:63 channel.lisp:65 channel.lisp:66 channel.lisp:67
+  channel.lisp:68 channel.lisp:69 channel.lisp:70 channel.lisp:71 channel.lisp:72
+  channel.lisp:73 channel.lisp:74 channel.lisp:75 channel.lisp:76 channel.lisp:77
+  channel.lisp:78 channel.lisp:79 channel.lisp:80 channel.lisp:81 channel.lisp:82
+  channel.lisp:83 channel.lisp:84 channel.lisp:85 channel.lisp:86 channel.lisp:87
+  channel.lisp:88 channel.lisp:89 channel.lisp:90 channel.lisp:91 channel.lisp:92
+  channel.lisp:93 channel.lisp:94 channel.lisp:95 channel.lisp:96 channel.lisp:97
+  select.lisp:9 select.lisp:12 select.lisp:13 select.lisp:14 select.lisp:15
+  select.lisp:16 select.lisp:17 select.lisp:18 select.lisp:19 select.lisp:20
+  select.lisp:21 select.lisp:22 select.lisp:23 select.lisp:24 select.lisp:25
+  select.lisp:26 select.lisp:27 select.lisp:28 select.lisp:29 select.lisp:30
+  select.lisp:31 select.lisp:32 select.lisp:33 select.lisp:34 select.lisp:35
+  select.lisp:36 select.lisp:37 select.lisp:38 select.lisp:39 select.lisp:40
+  select.lisp:41 select.lisp:42 select.lisp:43 select.lisp:44 select.lisp:45
+  select.lisp:46 select.lisp:47 select.lisp:48 select.lisp:49 select.lisp:50
+  select.lisp:51 select.lisp:52 select.lisp:53 select.lisp:54 select.lisp:55
+  select.lisp:56 select.lisp:57 select.lisp:58 select.lisp:59 select.lisp:60
+  select.lisp:61 select.lisp:62 select.lisp:63 select.lisp:64 select.lisp:65
+  select.lisp:66 select.lisp:67 select.lisp:68 select.lisp:69 select.lisp:70
+  select.lisp:71 select.lisp:72 select.lisp:73 select.lisp:74 select.lisp:75
+  select.lisp:76 select.lisp:77 select.lisp:78 select.lisp:79 select.lisp:80
+  select.lisp:81 select.lisp:82 select.lisp:83 select.lisp:84 select.lisp:85
+  select.lisp:86 select.lisp:87 select.lisp:88 select.lisp:89 select.lisp:90
+  select.lisp:91 select.lisp:92 select.lisp:93 select.lisp:94 select.lisp:95
+  select.lisp:96 select.lisp:97 select.lisp:98 select.lisp:99 select.lisp:100
+  select.lisp:101 select.lisp:102 select.lisp:103 select.lisp:104 select.lisp:105
+  select.lisp:106 select.lisp:107 select.lisp:108 select.lisp:109 select.lisp:110
+  select.lisp:111 select.lisp:112 select.lisp:113 select.lisp:114 select.lisp:115
+  select.lisp:116 select.lisp:117 select.lisp:118 select.lisp:119 select.lisp:120
+  select.lisp:121 select.lisp:122 select.lisp:123 select.lisp:124
+  executor.lisp:6 executor.lisp:14 executor.lisp:15 executor.lisp:16 executor.lisp:17
+  executor.lisp:18 executor.lisp:20 executor.lisp:21 executor.lisp:22 executor.lisp:44
+  executor.lisp:45 executor.lisp:46 executor.lisp:47 executor.lisp:94 executor.lisp:113
+  executor.lisp:114 executor.lisp:115 executor.lisp:116
+  scope-state.lisp:10 scope-state.lisp:13 scope-state.lisp:16 scope-state.lisp:17 scope-state.lisp:20
+  scope-state.lisp:26 scope-state.lisp:27 scope-state.lisp:29 scope-state.lisp:32 scope-state.lisp:34
+  scope-state.lisp:35 scope-state.lisp:36
+  scope-execution.lisp:8
+  scope.lisp:14
 );
 my %seen_non_executable_da;
 
