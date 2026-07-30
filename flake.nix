@@ -159,6 +159,11 @@
                   pkgs.coreutils
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+                # cl-weave:benchmark is loaded directly by the script (not
+                # just the test system), so its own store path must be on
+                # the source registry too -- see the :inherit-configuration
+                # source-registry form in benchmarks/run-benchmarks.lisp.
+                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//";
               }
               ''
                 export HOME="$TMPDIR/home"
@@ -178,6 +183,7 @@
                 ];
                 text = ''
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
+                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })
