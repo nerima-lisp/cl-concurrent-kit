@@ -121,18 +121,25 @@ aggregate promise."
             (settlements (make-array count)))
         (loop for promise in promises
               for index from 0
-              do (%observe-promise
-            promise
-            (lambda (state outcome)
-              (let (complete)
-                (with-lock-held
-                  (lock)
-                  (setf (aref settlements index) (ecase state
-                      (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
-                      (:failed (%make-promise-settlement :failed nil outcome))))
-                  (setf complete (zerop (decf remaining))))
-                (when complete
-                  (deliver aggregate (coerce settlements 'list)))))))))
+              do (let ((index index))
+                   ;; LOOP's FOR mutates one binding of INDEX in place rather
+                   ;; than creating a fresh one per iteration, so the closure
+                   ;; below needs its own copy -- otherwise every observer
+                   ;; would write to whatever INDEX the loop had reached by
+                   ;; the time a promise actually settled, not the slot it
+                   ;; was registered for.
+                   (%observe-promise
+                    promise
+                    (lambda (state outcome)
+                      (let (complete)
+                        (with-lock-held
+                          (lock)
+                          (setf (aref settlements index) (ecase state
+                              (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
+                              (:failed (%make-promise-settlement :failed nil outcome))))
+                          (setf complete (zerop (decf remaining))))
+                        (when complete
+                          (deliver aggregate (coerce settlements 'list))))))))))
     aggregate))
 
 (defmacro future (&body body)

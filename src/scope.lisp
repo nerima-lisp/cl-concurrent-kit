@@ -22,9 +22,9 @@
 
 (defun check-cancelled (scope)
   "Signal TASK-CANCELLED if SCOPE has been cancelled -- because a sibling
-task failed, or because WITH-TASK-SCOPE's body exited abnormally. Call this
-periodically from within long-running SPAWNed work, at points where stopping
-early is safe."
+task failed, because WITH-TASK-SCOPE's body exited abnormally, or because
+WITH-TASK-SCOPE has already returned. Call this periodically from within
+long-running SPAWNed work, at points where stopping early is safe."
   (when (with-lock-held ((task-scope-lock scope)) (task-scope-cancelled-p scope))
     (error 'task-cancelled :scope scope)))
 
@@ -46,13 +46,22 @@ early is safe."
     (push condition (task-scope-failures scope))))
 
 (defun spawn (scope function &key executor)
-  "Start FUNCTION as a child of SCOPE and return its promise.
+  "Start FUNCTION as a child of SCOPE and return its promise. If SCOPE has
+already been cancelled -- by a sibling's failure, or because its
+WITH-TASK-SCOPE has already returned -- the returned promise is immediately
+rejected with TASK-CANCELLED and FUNCTION never runs.
 
 When EXECUTOR is supplied, queue the child on that executor.  The optional
 executor is intentionally accepted here rather than by WITH-TASK-SCOPE so one
 scope can coordinate children with different execution policies."
-  (let* ((promise (make-promise))
-         (completion (make-promise))
+  (let ((promise (make-promise)))
+   (if (with-lock-held ((task-scope-lock scope)) (task-scope-cancelled-p scope))
+       (deliver-error promise (make-condition 'task-cancelled :scope scope))
+       (spawn-child scope function executor promise))
+   promise))
+
+(defun spawn-child (scope function executor promise)
+  (let* ((completion (make-promise))
          (child (%make-scope-child completion)))
     (%scope-add-child scope child)
     (if executor
@@ -120,7 +129,12 @@ scope can coordinate children with different execution policies."
       ;; it.
       (unless body-completed-p
         (%scope-cancel scope))
-      (%scope-await-children scope))
+      (%scope-await-children scope)
+      ;; Every child has now finished, so SCOPE is done either way. Mark it
+      ;; cancelled (a no-op if the block above already did) so a reference to
+      ;; SCOPE that escaped WITH-TASK-SCOPE's dynamic extent cannot SPAWN new
+      ;; work onto it.
+      (%scope-cancel scope))
     (when body-completed-p
       (%scope-signal-failures scope)
       (values-list results))))
