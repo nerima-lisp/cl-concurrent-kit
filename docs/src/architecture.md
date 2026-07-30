@@ -12,13 +12,12 @@ wrapper this produces.
 
 ## The CONDITION-WAIT timeout contract
 
-`SB-THREAD:CONDITION-WAIT` has a sharp edge: if its `:TIMEOUT` elapses, it
-returns `NIL` **without reacquiring the mutex**. Code that assumes the lock
-is still held after a `NIL` return will corrupt shared state or double-release
-a mutex. `src/primitives.lisp`'s `%WAIT-UNTIL` centralizes the correct
-pattern once (confirmed empirically against SBCL 2.6.0): every timeout path
-routes through an actual `CONDITION-WAIT` call, so "timed out" and "lock not
-held" are always the same event, never split across two branches.
+`SB-THREAD:CONDITION-WAIT` releases the mutex while waiting and reacquires it
+before every return, including when `:TIMEOUT` returns `NIL`. Code must loop
+after spurious wakeups and inspect lock-protected state while holding the
+mutex after every wakeup. `src/primitives.lisp`'s `%WAIT-UNTIL` relies on that
+ownership contract while computing one absolute deadline, so repeated wakeups
+cannot extend the requested timeout.
 
 ## The unbuffered channel is a real rendezvous, not buffer-size-1
 
@@ -47,10 +46,17 @@ semaphore as a temporary waiter on every channel involved
 channel -- a value sent, received, or the channel closed -- signals that
 semaphore in addition to the channel's own condition variable
 (`%CHANNEL-NOTIFY`). `SELECT`'s loop tries every clause non-blockingly (via
-`TRY-SEND`/`TRY-RECV`, in a fresh random order each pass, for fairness), and
-only sleeps on its semaphore -- with a computed remaining timeout, if any --
-when nothing was ready. `UNWIND-PROTECT` guarantees the waiter is removed
-from every channel before `SELECT` returns, however it returns.
+`TRY-SEND`/`TRY-RECV`) in declaration order and chooses the first ready
+operation. This deterministic priority avoids randomization overhead, but it
+does not provide fairness among clauses. The loop only sleeps on its semaphore
+-- with a computed remaining timeout, if any -- when nothing was ready.
+`UNWIND-PROTECT` guarantees the waiter is removed from every channel before
+`SELECT` returns, however it returns.
+
+Because the clauses are available at macroexpansion time, `SELECT` emits these
+probes directly instead of allocating a runtime operation vector and
+dispatching its selected index. This changes only the ready-path overhead; the
+registration, retry, and cleanup protocol remains the same.
 
 ## Structured concurrency: why the body's own error is never wrapped
 

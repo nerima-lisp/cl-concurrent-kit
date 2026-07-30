@@ -9,7 +9,7 @@
     # cl-weave is a test-only dependency (see cl-concurrent-kit.asd), so only
     # its source tree is needed here, not its flake outputs.
     cl-weave = {
-      url = "github:nerima-lisp/cl-weave/v1.0.0";
+      url = "github:nerima-lisp/cl-weave/v1.0.1";
       flake = false;
     };
 
@@ -39,6 +39,23 @@
 
       # CL_SOURCE_REGISTRY for the test/dev environment.
       sourceRegistry = "${cl-weave}//:${self}//";
+
+      # A first-class Nix input keeps the app and the CI check on the exact
+      # same coverage runner, rather than duplicating the invocation.
+      coverageScript = builtins.path {
+        path = ./run-coverage.lisp;
+        name = "cl-concurrent-kit-coverage-runner";
+      };
+
+      coverageVerifier = builtins.path {
+        path = ./scripts/verify-lcov.pl;
+        name = "cl-concurrent-kit-coverage-verifier";
+      };
+
+      benchmarkScript = builtins.path {
+        path = ./benchmarks/run-benchmarks.lisp;
+        name = "cl-concurrent-kit-benchmark-runner";
+      };
 
       # Single source of truth for the package version: the `:version` form in
       # cl-concurrent-kit.asd. Nix regexes are whole-string anchored and `.`
@@ -131,8 +148,66 @@
               ''
                 export HOME="$TMPDIR/home"
                 mkdir -p "$HOME" "$out"
-                timeout 120 sbcl --script ${self}/run-tests.lisp
-                touch "$out/passed"
+                timeout --signal=KILL 90s sbcl --script ${self}/run-tests.lisp
+                  touch "$out/passed"
+              '';
+
+          benchmark =
+            pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
+              {
+                nativeBuildInputs = [
+                  pkgs.sbcl
+                  pkgs.coreutils
+                  pkgs.perl
+                ];
+                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME"
+                timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 1 > "$out"
+                perl -F'\t' -ane '
+                  chomp;
+                  if ($. == 1) {
+                    die "unexpected benchmark header\n"
+                      unless @F == 5
+                        && $F[0] eq "name"
+                        && $F[1] eq "iterations"
+                        && $F[2] eq "operations"
+                        && $F[3] eq "seconds"
+                          && $F[4] =~ /\Aoperations-per-second\s*\z/;
+                    } elsif ($. <= 5) {
+                      die "unexpected benchmark row\n"
+                        unless @F == 5
+                          && $F[0] eq ($. == 2 ? "atomic-counter-incf" : $. == 3 ? "buffered-channel-round-trip" : $. == 4 ? "select-ready-recv" : "executor-submit-await")
+                        && $F[1] == 1
+                        && $F[2] > 0
+                        && $F[3] > 0
+                        && $F[4] > 0;
+                  } else {
+                    die "unexpected extra benchmark output\n";
+                  }
+                    END { die "benchmark output must contain one header and four rows\n" unless $. == 5; }
+                ' "$out"
+              '';
+
+          coverage =
+            pkgs.runCommand "cl-concurrent-kit-coverage"
+              {
+                nativeBuildInputs = [
+                  pkgs.sbcl
+                  pkgs.coreutils
+                  pkgs.perl
+                ];
+                CL_SOURCE_REGISTRY = sourceRegistry;
+                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+              }
+              ''
+                export HOME="$TMPDIR/home"
+                mkdir -p "$HOME"
+                timeout --signal=KILL 600s sbcl --script ${coverageScript} "$out"
+                test -s "$out/html/cover-index.html"
+                perl ${coverageVerifier} "$out/lcov.info" ${self}
               '';
 
           formatting = treefmtEval.${system}.config.build.check self;
@@ -153,7 +228,40 @@
             ];
             text = ''
               export CL_SOURCE_REGISTRY="${sourceRegistry}"
-              exec timeout 120 sbcl --script ${self}/run-tests.lisp
+              exec timeout --signal=KILL 90s sbcl --script ${self}/run-tests.lisp
+            '';
+          };
+          coverage = pkgs.writeShellApplication {
+            name = "cl-concurrent-kit-coverage";
+            runtimeInputs = [
+              pkgs.sbcl
+              pkgs.coreutils
+              pkgs.perl
+            ];
+            text = ''
+              export CL_SOURCE_REGISTRY="${sourceRegistry}"
+              export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
+              if [ "$#" -ne 1 ]; then
+                printf '%s\\n' 'Usage: cl-concurrent-kit-coverage OUTPUT-DIRECTORY' >&2
+                exit 2
+              fi
+              output_directory="$1"
+              timeout --signal=KILL 600s sbcl --script ${coverageScript} "$output_directory"
+              test -s "$output_directory/html/cover-index.html"
+              test -s "$output_directory/lcov.info"
+              perl ${coverageVerifier} "$output_directory/lcov.info" ${self}
+            '';
+          };
+          benchmark = pkgs.writeShellApplication {
+            name = "cl-concurrent-kit-benchmark";
+            runtimeInputs = [
+              pkgs.sbcl
+              pkgs.coreutils
+            ];
+            text = ''
+              unset CL_SOURCE_REGISTRY
+              export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
+              exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
             '';
           };
         in
@@ -165,6 +273,14 @@
           test = {
             type = "app";
             program = "${test}/bin/cl-concurrent-kit-test";
+          };
+          coverage = {
+            type = "app";
+            program = "${coverage}/bin/cl-concurrent-kit-coverage";
+          };
+          benchmark = {
+            type = "app";
+            program = "${benchmark}/bin/cl-concurrent-kit-benchmark";
           };
         }
       );

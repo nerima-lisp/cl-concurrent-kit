@@ -39,6 +39,12 @@
    #:make-promise
    #:promise-p
    #:promise-settled-p
+   #:promise-all-settled
+   #:promise-settlement
+   #:promise-settlement-p
+   #:promise-settlement-state
+   #:promise-settlement-value
+   #:promise-settlement-condition
    #:deliver
    #:deliver-error
    #:await
@@ -77,6 +83,8 @@
    #:promise-already-fulfilled-promise
    #:channel-closed
    #:channel-closed-channel
+   #:executor-shut-down
+   #:executor-shut-down-executor
    #:task-cancelled
    #:task-cancelled-scope
    #:scope-error

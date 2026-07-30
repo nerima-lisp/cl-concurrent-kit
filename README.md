@@ -30,7 +30,7 @@ The source for that site lives in [docs/src/](docs/src/).
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.1.0";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.2.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
@@ -49,9 +49,18 @@ than follow the default branch.
 ```sh
 nix develop          # SBCL with CL_SOURCE_REGISTRY already set
 nix run .#test       # run the test suite
-nix flake check      # tests + formatting + docs, the same gate CI uses
+nix run .#coverage -- ./coverage  # write HTML and LCOV coverage reports to ./coverage
+nix run .#benchmark -- 1000000  # report hot-path throughput as TSV
+nix flake check      # tests + coverage + formatting + docs, the same gate CI uses
 nix fmt              # format Nix sources (treefmt)
 ```
+
+`benchmark` warms each workload, takes five post-GC samples, and reports the
+median TSV throughput for atomic-counter increment, a capacity-one buffered
+channel round trip, an immediately ready `SELECT` receive, and an executor
+submit/await round trip. Each workload validates its result. CI checks the
+output shape rather than a machine-specific throughput threshold; compare
+numbers only on like-for-like SBCL versions, CPU governors, and hardware.
 
 Tests live in `t/` and run under [cl-weave](https://github.com/nerima-lisp/cl-weave),
 the org's test framework.
