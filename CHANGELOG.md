@@ -57,6 +57,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `with-soft-assertions` (cl-weave) around the multi-`expect` checks in
   `promise-all-settled` and closed-channel `recv`'s tests, so a failure in
   one no longer hides whether the others also failed.
+- `src/fifo.lisp`'s FIFO is now an intrusive doubly-linked list (`fifo-cell`
+  tracking its own `previous`/`next`/`linked-p`) instead of a plain cons-cell
+  queue: `fifo-remove` deletes a specific cell in O(1) -- used by an
+  unbuffered `send`'s timeout to retract the value it queued before any
+  `recv` took it, so a timed-out send no longer leaves a phantom value for a
+  future `recv` to hand out -- and `fifo-detach` empties the whole queue in
+  O(1), used by `shutdown-executor :cancel-pending t` to reject every
+  pending task without popping them one at a time.
+- `channel`'s waiters moved from a list to a hash table keyed by an interest
+  bitmask (`+channel-notify-send+`/`-recv+`/`-rendezvous+`/`-close+`) over
+  separate send/recv/rendezvous condition variables, so a state transition
+  wakes only the `select` calls actually registered for it instead of every
+  waiter on the channel.
+- `promise`'s observers append in O(1) via a tracked `observer-tail` instead
+  of `push`ing and `nreverse`-ing the list in `%settle`; an observer
+  callback that signals is now caught and its condition re-signaled only
+  after every other observer has still been notified, instead of aborting
+  notification of the rest.
+- `executor`'s per-task state (`:pending`/`:running`/`:cancelled`) now
+  transitions via `sb-ext:compare-and-swap` instead of a dedicated per-task
+  lock, and a task's outcome -- run to completion or cancelled before a
+  worker claimed it -- reaches its `on-settle` callback uniformly through
+  one path (`%executor-task-settle`) rather than two.
+- `src/scope-state.lisp` split further into `src/scope-state.lisp` (the
+  `task-scope` struct and its low-level state transitions) and
+  `src/scope-execution.lisp` (`spawn`'s dispatch to a dedicated thread or an
+  executor), leaving `src/scope.lisp` with only `check-cancelled`,
+  `%scope-signal-failures`, and the `with-task-scope` macro itself.
+  `task-scope` gained a `closing-p` flag, set before `with-task-scope`
+  starts awaiting its children, so a child racing to `spawn` itself in that
+  window is rejected immediately instead of possibly slipping in after
+  `%scope-await-children` has already taken its "no children left" snapshot.
+- `benchmarks/run-benchmarks.lisp` gained a `select-ready-recv` benchmark
+  alongside its existing coverage.
+- `nix flake check` gained a `coverage-lcov` check and `nix run .#benchmark`
+  an app, both driven by this project's own `run-coverage.lisp` and
+  `scripts/verify-lcov.pl`, layered on top of (not instead of)
+  cl-nix-forge's generic `mkCoverageReport`.
 
 ### Changed
 

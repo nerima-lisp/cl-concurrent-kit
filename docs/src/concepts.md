@@ -48,6 +48,22 @@ blocking `SEND` provides, in exchange for never waiting.
 ready first. It is not a busy-poll loop: see [Architecture](architecture.md)
 for how it sleeps between attempts.
 
+Each `recv` channel form and each `send` channel/value form is evaluated
+exactly once, in clause order, before `SELECT` probes for a ready operation.
+This makes side-effecting setup expressions predictable even when a timeout
+causes multiple readiness checks.
+
+For static clauses, `SELECT` expands each `TRY-RECV` or `TRY-SEND` probe
+directly. The ready path does not construct a runtime operation table or
+dispatch through a selected index; the once-only bindings retain the same
+evaluation and cleanup semantics.
+
+`SELECT` gives clauses deterministic declaration-order priority when more
+than one is ready. A receive from a closed and drained channel is ready too,
+binding its value variable to `NIL`; a send to a closed channel signals
+`CHANNEL-CLOSED` just as `SEND` does. `:DEFAULT` and `:TIMEOUT` are mutually
+exclusive, and a form must contain at least one channel clause.
+
 ## Executors vs. futures
 
 `FUTURE` spawns one thread per task. `MAKE-EXECUTOR` starts a fixed pool of

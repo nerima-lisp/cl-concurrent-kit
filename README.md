@@ -36,7 +36,7 @@ The source for that site lives in [docs/src/](docs/src/).
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.1.0";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.2.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
@@ -56,33 +56,26 @@ than follow the default branch.
 nix develop          # SBCL with CL_SOURCE_REGISTRY already set
 nix run .#test       # run the test suite
 nix build .#coverage # an sb-cover HTML report as the build's $out
-nix flake check      # tests + formatting + docs + coverage, the same gate CI uses
+nix run .#benchmark -- 1000000  # report each primitive's round-trip overhead
+nix flake check      # tests + coverage + formatting + docs, the same gate CI uses
 nix fmt              # format Nix sources (treefmt)
 ```
 
 Outside Nix, `sbcl --script run-coverage.lisp [output-dir]` writes the same
 HTML report plus an `lcov.info` next to it, for tooling that reads LCOV
-directly.
+directly; `nix flake check`'s `coverage-lcov` check runs the same script and
+additionally fails the build if any source file falls under this project's
+own coverage bar, rather than only rendering a number someone has to
+remember to look at.
 
-Every runtime-reachable branch in `src/` is exercised by the test suite
-(`nix build .#coverage`'s branch column reads 100% file-by-file except
-`channel.lisp`, whose four uncovered branches are the `(INTEGER 0)` type
-declarations on `CHANNEL`'s `BUFFER-SIZE` and `COUNT` slots: `MAKE-CHANNEL`
-already `CHECK-TYPE`s `BUFFER-SIZE` before it ever reaches the slot, and
-`COUNT` is only ever set from arithmetic already known non-negative, so
-there is no test-reachable way to take the "value violates its declared
-type" side of either check). The *expression* column stays below 100% on
-every file for the same structural reason, not a testing gap: `sb-cover`
-instruments code as it runs, and each file's own `IN-PACKAGE` form, its
-`DEFSTRUCT` slot-default initializers, and any `DEFMACRO`'s body all run
-once at compile/macroexpansion time -- before `sb-cover` starts recording --
-so they show up as "not executed" no matter how many times their effect (a
+`sb-cover` instruments code as it runs, so a file's own `IN-PACKAGE` form, its
+`DEFSTRUCT` slot-default initializers, and any `DEFMACRO`'s body all run once
+at compile/macroexpansion time -- before `sb-cover` starts recording -- and
+show up as "not executed" no matter how many times their effect (a
 fully-covered `DEFINE-CONDITION`, a channel actually being locked) is
-exercised. `conditions.lisp` and `package.lisp` show this most starkly
-(52.5% and 0%: nearly everything in each is exactly this kind of
-compile-time form), but the same handful of points cost every other file a
-few percent too. Chasing 100% there would mean chasing the instrumentation,
-not the behavior.
+exercised elsewhere. Chasing 100% on the *expression* column there would mean
+chasing the instrumentation, not the behavior; the *branch* column is the one
+worth holding at 100%.
 
 Tests live in `t/` and run under [cl-weave](https://github.com/nerima-lisp/cl-weave),
 the org's test framework.

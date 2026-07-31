@@ -14,9 +14,18 @@
                                *compile-file-truename*
                                (error "Unable to determine the script location"))))
 
-(let ((root (merge-pathnames "../" (script-directory))))
-  (asdf:initialize-source-registry
-   `(:source-registry (:tree ,root) :inherit-configuration)))
+(defun source-root ()
+  "This project's own root, honoring CL_CONCURRENT_KIT_SOURCE_ROOT when set --
+necessary when this script itself runs from a location that is not the
+project root, e.g. copied into the Nix store as its own derivation by
+flake.nix's benchmark check/app."
+  (or
+   (let ((value (uiop:getenv "CL_CONCURRENT_KIT_SOURCE_ROOT")))
+     (and value (uiop:ensure-directory-pathname value)))
+   (merge-pathnames "../" (script-directory))))
+
+(asdf:initialize-source-registry
+ `(:source-registry (:tree ,(source-root)) :inherit-configuration))
 
 (asdf:load-system "cl-concurrent-kit")
 (asdf:load-system "cl-weave")
@@ -43,6 +52,13 @@
    (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
      (send channel :x)
      (recv channel))))
+
+(%report-benchmark
+ "select-ready-recv, 1000 pairs"
+ (let ((channel (make-channel :buffer-size 1)))
+   (cl-weave:benchmark (:warmup 100 :samples 20 :iterations 1000)
+     (send channel :x)
+     (select ((recv channel) (value) value)))))
 
 (%report-benchmark
  "promise deliver+await round-trip, 1000 pairs"

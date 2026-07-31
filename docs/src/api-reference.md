@@ -47,7 +47,9 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `PROMISE-THEN` `(promise on-fulfilled &optional on-rejected)` | Continuation-passing composition: register `on-fulfilled`/`on-rejected` and return a new `PROMISE` for whichever one runs, without blocking. See [Core concepts](concepts.md). |
 | `PROMISE-RACE` `(promises)` | A `PROMISE` that settles the same way as whichever of `promises` (non-empty) settles first, via the same continuation-passing composition as `PROMISE-THEN`. |
 | `FUTURE` `(&body body)` | Macro: spawn `body` on a thread, return its `PROMISE` immediately. |
-| `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records. Never fails, even if some inputs do. |
+| `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records; failures are represented rather than re-signaled. Never fails, even if some inputs do. Empty input yields `NIL`. |
+| `PROMISE-SETTLEMENT` | Structure type returned by `PROMISE-ALL-SETTLED`. |
+| `PROMISE-SETTLEMENT-P` `(x)` | Type predicate for settlement records. |
 | `PROMISE-SETTLEMENT-STATE` `(settlement)` | `:FULFILLED` or `:FAILED`. |
 | `PROMISE-SETTLEMENT-VALUE` `(settlement)` | Meaningful when `:FULFILLED`. |
 | `PROMISE-SETTLEMENT-CONDITION` `(settlement)` | Meaningful when `:FAILED`. |
@@ -69,7 +71,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
-| `SELECT` `(&body clauses)` | Macro: wait on several channel operations; see [Core concepts](concepts.md). |
+| `SELECT` `(&body clauses)` | Macro: wait on several channel operations. Requires at least one `RECV` or `SEND` clause; channel and send-value forms are evaluated once, in clause order. `:DEFAULT` and `:TIMEOUT` are mutually exclusive. See [Core concepts](concepts.md). |
 
 ## Executors
 
@@ -77,8 +79,8 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 |---|---|
 | `MAKE-EXECUTOR` `(&key size name)` | A fixed-size worker pool. |
 | `EXECUTOR-P` `(x)` | Type predicate. |
-| `SUBMIT` `(executor thunk)` | Queue `thunk`, return a `PROMISE`. |
-| `SHUTDOWN-EXECUTOR` `(executor &key wait cancel-pending)` | Stop accepting new work. `CANCEL-PENDING` rejects tasks still queued instead of running them; `WAIT` blocks until every worker thread has exited. |
+| `SUBMIT` `(executor thunk)` | Queue `thunk`, return a `PROMISE`; after shutdown the promise fails with `EXECUTOR-SHUT-DOWN`. |
+| `SHUTDOWN-EXECUTOR` `(executor &key wait cancel-pending timeout)` | Stop accepting work; with `cancel-pending`, reject queued tasks without running them. With `wait`, wait for workers to exit. `timeout` bounds the entire join phase and signals `OPERATION-TIMED-OUT` if it expires; if called by an executor worker, it closes the queue but signals `EXECUTOR-SHUT-DOWN` instead of joining itself. |
 
 ## Structured concurrency
 
@@ -93,8 +95,9 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | Symbol | Base | Description |
 |---|---|---|
 | `CL-CONCURRENT-KIT-ERROR` | `ERROR` | Base condition for the whole library. |
-| `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A `:TIMEOUT` elapsed. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
+| `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, or scope cleanup, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
 | `PROMISE-ALREADY-FULFILLED` | `CL-CONCURRENT-KIT-ERROR` | `DELIVER`/`DELIVER-ERROR` called twice. Reader: `PROMISE-ALREADY-FULFILLED-PROMISE`. |
 | `CHANNEL-CLOSED` | `CL-CONCURRENT-KIT-ERROR` | `SEND`/`TRY-SEND` after close. Reader: `CHANNEL-CLOSED-CHANNEL`. |
+| `EXECUTOR-SHUT-DOWN` | `CL-CONCURRENT-KIT-ERROR` | A submission was rejected or cancelled by executor shutdown, or an executor worker called `SHUTDOWN-EXECUTOR` with `:WAIT T` and therefore could not join itself. Reader: `EXECUTOR-SHUT-DOWN-EXECUTOR`. |
 | `TASK-CANCELLED` | `CL-CONCURRENT-KIT-ERROR` | Signaled by `CHECK-CANCELLED`. Reader: `TASK-CANCELLED-SCOPE`. |
 | `SCOPE-ERROR` | `CL-CONCURRENT-KIT-ERROR` | One or more `SPAWN`ed tasks failed. Reader: `SCOPE-ERROR-CAUSES`. |

@@ -60,6 +60,12 @@ delivered more than once.")
 been called on. RECV keeps draining any values sent before the channel closed
 instead of signaling this; only sending after close is an error.")
 
+(%define-kit-condition executor-shut-down
+    ((executor "The executor that rejected or cancelled the task."))
+  ("Executor ~S has shut down." (executor-shut-down-executor condition))
+  "Delivered through a submitted promise when its executor no longer accepts
+work.")
+
 (%define-kit-condition task-cancelled
     ((scope "The scope whose cancellation CHECK-CANCELLED observed."))
   ("Task cancelled: its enclosing scope ~S was cancelled."

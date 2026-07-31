@@ -30,6 +30,7 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "select")
    (:file "executor")
    (:file "scope-state")
+   (:file "scope-execution")
    (:file "scope"))
   :in-order-to ((test-op (test-op "cl-concurrent-kit/test"))))
 

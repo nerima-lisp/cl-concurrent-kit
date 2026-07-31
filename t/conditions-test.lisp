@@ -19,6 +19,14 @@
       (expect (princ-to-string condition) :to-satisfy
               (lambda (report) (search "closed channel" report)))))
 
+  (it "EXECUTOR-SHUT-DOWN reports the shut-down executor"
+    (let* ((executor (make-executor :size 1))
+           (condition (make-condition 'executor-shut-down :executor executor)))
+      (unwind-protect
+          (expect (princ-to-string condition) :to-satisfy
+                  (lambda (report) (search "shut down" report)))
+        (shutdown-executor executor :wait t))))
+
   (it "TASK-CANCELLED reports the cancelled scope"
     (let* ((scope (cl-concurrent-kit::%make-task-scope))
            (condition (make-condition 'task-cancelled :scope scope)))

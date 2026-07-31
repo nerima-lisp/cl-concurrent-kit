@@ -9,7 +9,6 @@
 (in-package #:cl-concurrent-kit)
 
 ;;; Threads
-
 (defun make-thread (function &key name arguments)
   "Run FUNCTION on a new thread named NAME, passing it ARGUMENTS (a list,
 applied as in APPLY). Returns the new SB-THREAD:THREAD immediately; the
@@ -32,14 +31,12 @@ thread's return values are collected by JOIN-THREAD."
   "Block until THREAD exits and return the values its function returned. If
 THREAD exits abnormally (an uncaught condition) or TIMEOUT elapses first,
 return DEFAULT when supplied; otherwise signal SB-THREAD:JOIN-THREAD-ERROR."
-  (if defaultp
-      (sb-thread:join-thread thread :default default :timeout timeout)
-      (sb-thread:join-thread thread :timeout timeout)))
+  (if defaultp (sb-thread:join-thread thread :default default :timeout timeout)
+    (sb-thread:join-thread thread :timeout timeout)))
 
 ;;; Locks
-
 (defun make-lock (&key name)
-  "Create a recursive mutex named NAME."
+  "Create a mutex named NAME."
   (sb-thread:make-mutex :name name))
 
 (defmacro with-lock-held ((lock) &body body)
@@ -47,24 +44,17 @@ return DEFAULT when supplied; otherwise signal SB-THREAD:JOIN-THREAD-ERROR."
   `(sb-thread:with-mutex (,lock) ,@body))
 
 ;;; Condition variables
-
 (defun make-condition-variable (&key name)
   "Create a condition variable named NAME, used with a lock via
 CONDITION-WAIT/CONDITION-NOTIFY/CONDITION-BROADCAST."
   (sb-thread:make-waitqueue :name name))
 
 (defun condition-wait (condition-variable lock &key timeout)
-  "Atomically release LOCK and wait on CONDITION-VARIABLE until
-CONDITION-NOTIFY or CONDITION-BROADCAST wakes this thread, then reacquire
-LOCK and return T. LOCK must be held by this thread on entry.
+  "Atomically release LOCK and wait on CONDITION-VARIABLE until CONDITION-NOTIFY or CONDITION-BROADCAST wakes this thread, then reacquire LOCK before returning. LOCK must be held by this thread on entry.
 
-Spurious wakeups are possible -- callers must loop, rechecking the condition
-they are actually waiting for.
+Spurious wakeups are possible -- callers must loop, rechecking the condition they are actually waiting for.
 
-If TIMEOUT (seconds) elapses first, returns NIL WITHOUT reacquiring LOCK.
-Code that uses a timeout must not touch LOCK-protected state after a NIL
-return; the correct pattern is to unwind immediately, exactly as if LOCK's
-dynamic extent (e.g. WITH-LOCK-HELD) had already ended."
+When TIMEOUT (seconds) elapses, return NIL with LOCK held. Otherwise return T with LOCK held."
   (sb-thread:condition-wait condition-variable lock :timeout timeout))
 
 (defun condition-notify (condition-variable)
@@ -80,7 +70,6 @@ thread; see CONDITION-WAIT."
   (values))
 
 ;;; Semaphores
-
 (defun make-semaphore (&key name (count 0))
   "Create a semaphore named NAME with initial count COUNT."
   (sb-thread:make-semaphore :name name :count count))
@@ -103,9 +92,7 @@ WAIT-ON-SEMAPHORE."
 ;;; so ATOMIC-COUNTER is scoped to non-negative counting such as "tasks
 ;;; currently outstanding", where increments and decrements are paired and the
 ;;; count never needs to go negative.
-
-(defstruct (atomic-counter (:constructor %make-atomic-counter (value)))
-  (value 0 :type (unsigned-byte 64)))
+(defstruct (atomic-counter (:constructor %make-atomic-counter (value))) (value 0 :type (unsigned-byte 64)))
 
 (defun make-atomic-counter (&optional (initial-value 0))
   "Create an ATOMIC-COUNTER starting at INITIAL-VALUE."
@@ -126,36 +113,56 @@ WAIT-ON-SEMAPHORE."
 ;;; computed once, so a loop that wakes up repeatedly (spurious wakeups,
 ;;; broadcasts meant for a different waiter) converges on the same deadline
 ;;; instead of restarting a fresh N-second wait on every iteration.
-
 (defun %deadline-from-timeout (timeout)
   "Return an absolute GET-INTERNAL-REAL-TIME value TIMEOUT seconds from now,
 or NIL if TIMEOUT is NIL (no deadline)."
   (when timeout
     (+ (get-internal-real-time) (round (* timeout internal-time-units-per-second)))))
 
-(defun %wait-until (condition-variable lock predicate deadline)
-  "LOCK must be held on entry. Calls PREDICATE (a thunk) after every wakeup on
-CONDITION-VARIABLE until it returns non-NIL, and returns that value with LOCK
-still held. If DEADLINE (a GET-INTERNAL-REAL-TIME value, or NIL to wait
-forever) passes first, returns :TIMEOUT -- and, per CONDITION-WAIT's own
-contract, LOCK is then NOT held, so the caller must unwind immediately without
-touching LOCK-protected state."
-  (loop
-    (let ((result (funcall predicate)))
-      (when result (return result)))
-    (let ((timeout (when deadline
-                      (max 0.0d0
-                           (/ (- deadline (get-internal-real-time))
-                              (float internal-time-units-per-second 0.0d0))))))
-      (unless (condition-wait condition-variable lock :timeout timeout)
-        (return :timeout)))))
+(defmacro %wait-until ((condition-variable lock deadline) &body predicate-forms)
+  "Wait with LOCK held until PREDICATE-FORMS produce a non-NIL value, and
+return that value with LOCK still held.
 
-(defmacro %with-deadline-wait ((result-var condition-variable lock predicate deadline
+CONDITION-VARIABLE, LOCK, and DEADLINE are evaluated once. PREDICATE-FORMS
+expand directly into the loop body instead of being wrapped in a thunk, so
+this costs no per-operation closure allocation on CHANNEL and PROMISE's hot
+paths. SB-THREAD:CONDITION-WAIT always reacquires LOCK before returning, on a
+timeout or otherwise, so this macro's :TIMEOUT return is itself within the
+caller's WITH-LOCK-HELD dynamic extent, LOCK held -- callers that need to
+clean up LOCK-protected state before signaling a timeout (CHANNEL's
+unbuffered SEND is the one in this codebase) can rely on that."
+  (let* ((condition-variable-var (gensym "CONDITION-VARIABLE-"))
+         (lock-var (gensym "LOCK-"))
+         (deadline-var (gensym "DEADLINE-"))
+         (result-var (gensym "RESULT-"))
+         (timeout-var (gensym "TIMEOUT-"))
+         (predicate-form
+          (if (rest predicate-forms)
+              (cons 'progn predicate-forms)
+              (first predicate-forms))))
+    `(let ((,condition-variable-var ,condition-variable)
+           (,lock-var ,lock)
+           (,deadline-var ,deadline))
+       (loop
+         (let ((,result-var ,predicate-form))
+           (when ,result-var
+             (return ,result-var)))
+         (let ((,timeout-var
+                 (when ,deadline-var
+                   (max 0.0d0
+                        (/ (- ,deadline-var (get-internal-real-time))
+                           (float internal-time-units-per-second 0.0d0))))))
+           (unless (condition-wait ,condition-variable-var ,lock-var
+                                   :timeout ,timeout-var)
+             (return :timeout)))))))
+
+(defmacro %with-deadline-wait ((result-var condition-variable lock deadline
                                 timeout operation)
-                               &body body)
-  "Bind RESULT-VAR to (%WAIT-UNTIL CONDITION-VARIABLE LOCK PREDICATE DEADLINE)
-and run BODY. If %WAIT-UNTIL times out, signal OPERATION-TIMED-OUT naming
-OPERATION and TIMEOUT instead of running BODY at all.
+                               predicate-form &body body)
+  "Bind RESULT-VAR to (%WAIT-UNTIL (CONDITION-VARIABLE LOCK DEADLINE)
+PREDICATE-FORM) and run BODY. If the wait times out, signal
+OPERATION-TIMED-OUT naming OPERATION and TIMEOUT instead of running BODY at
+all.
 
 DEADLINE and TIMEOUT are taken separately, not derived from one another here,
 because a caller that waits more than once against the same overall budget --
@@ -165,10 +172,9 @@ seconds value) is needed again on every wait purely to report it. Callers
 that wait only once typically write DEADLINE as
 `(%deadline-from-timeout TIMEOUT)` inline.
 
-LOCK must be held by the caller exactly as %WAIT-UNTIL requires; per its own
-contract, LOCK is no longer held after a timeout, so BODY -- which does not
-run in that case -- never needs to account for it."
-  `(let ((,result-var (%wait-until ,condition-variable ,lock ,predicate ,deadline)))
+A caller whose own cleanup must run under LOCK before a timeout is reported
+should use %WAIT-UNTIL directly instead -- see its docstring."
+  `(let ((,result-var (%wait-until (,condition-variable ,lock ,deadline) ,predicate-form)))
      (when (eq ,result-var :timeout)
        (error 'operation-timed-out :operation ,operation :timeout ,timeout))
      ,@body))

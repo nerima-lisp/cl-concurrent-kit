@@ -8,6 +8,121 @@
 ;;;; as soon as any one of its channels changes state.
 (in-package #:cl-concurrent-kit)
 
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (let (#+sbcl (sb-ext:*evaluator-mode* :interpret))
+    (eval '(defun %expand-select (clauses)
+  "Wait on channel operations and execute the first ready clause directly."
+  (let ((operations nil)
+        (default-body nil)
+        (default-seen-p nil)
+        (timeout nil))
+    (dolist (clause clauses)
+      (ecase (if (keywordp (first clause)) (first clause) :operation)
+        (:default
+         (when default-seen-p
+           (error "SELECT: at most one :DEFAULT clause is allowed"))
+         (destructuring-bind (() &body body) (rest clause)
+           (setf default-body body
+                 default-seen-p t)))
+        (:timeout
+         (when timeout
+           (error "SELECT: at most one :TIMEOUT clause is allowed"))
+         (destructuring-bind (seconds () &body body) (rest clause)
+           (setf timeout (cons seconds body))))
+        (:operation
+         (destructuring-bind ((operator &rest arguments) bindings &body body) clause
+           (push
+            (ecase operator
+              (recv
+               (destructuring-bind (channel-form) arguments
+                 (destructuring-bind (&optional value-variable) bindings
+                   (list :recv channel-form value-variable body))))
+              (send
+               (destructuring-bind (channel-form value-form) arguments
+                 (list :send channel-form value-form body))))
+            operations)))))
+    (unless operations
+      (error "SELECT: at least one channel operation is required"))
+    (when (and default-seen-p timeout)
+      (error "SELECT: :DEFAULT and :TIMEOUT are mutually exclusive"))
+    (let* ((ordered (nreverse operations))
+           (waiter (gensym "WAITER"))
+           (deadline (gensym "DEADLINE"))
+           (block (gensym "SELECT"))
+           (bindings
+            (loop for operation in ordered
+                  collect (let ((channel (gensym "CHANNEL")))
+                            (ecase (first operation)
+                              (:recv (list operation channel nil))
+                              (:send (list operation channel (gensym "VALUE")))))))
+           (binding-forms
+            (loop for binding in bindings
+                  for operation = (first binding)
+                  for channel = (second binding)
+                  for value = (third binding)
+                  append (if value
+                             (list (list channel (second operation))
+                                   (list value (third operation)))
+                             (list (list channel (second operation))))))
+           (registration-forms
+            (loop for binding in bindings
+                  for operation = (first binding)
+                  for channel = (second binding)
+                  collect `(%channel-add-waiter
+                             ,channel
+                             ,waiter
+                             ,(if (eq (first operation) :recv)
+                                  +channel-notify-recv+
+                                  +channel-notify-send+))))
+           (removal-forms
+            (loop for binding in bindings
+                  collect `(%channel-remove-waiter ,(second binding) ,waiter)))
+           (probe-forms
+            (loop for binding in bindings
+                  for operation = (first binding)
+                  for channel = (second binding)
+                  for value = (third binding)
+                  collect
+                  (ecase (first operation)
+                    (:recv
+                     (let ((variable (third operation))
+                           (body (fourth operation))
+                           (received (gensym "RECEIVED"))
+                           (closed (gensym "CLOSED"))
+                           (result (gensym "RESULT")))
+                       `(multiple-value-bind (,result ,received ,closed)
+                             (try-recv ,channel)
+                           (when (or ,received ,closed)
+                             (return-from ,block
+                               ,(if variable
+                                    `(let ((,variable ,result)) ,@body)
+                                    `(locally ,@body)))))))
+                    (:send
+                     (let ((body (fourth operation)))
+                       `(when (try-send ,channel ,value)
+                          (return-from ,block (locally ,@body)))))))))
+      `(let* (,@binding-forms
+               (,waiter (make-semaphore))
+               (,deadline ,(when timeout `(%deadline-from-timeout ,(car timeout)))))
+         (block ,block
+           (unwind-protect
+                (progn
+                  ,@registration-forms
+                  (loop
+                    ,@probe-forms
+                    ,(when default-seen-p `(return-from ,block (locally ,@default-body)))
+                    ,(if timeout
+                         `(let ((remaining
+                                  (and ,deadline
+                                       (max 0.0d0
+                                            (/ (- ,deadline (get-internal-real-time))
+                                               (float internal-time-units-per-second 0.0d0))))))
+                            (if (and remaining (zerop remaining))
+                                (return-from ,block (locally ,@(cdr timeout)))
+                                (wait-on-semaphore ,waiter :timeout remaining)))
+                         `(wait-on-semaphore ,waiter))))
+             ,@removal-forms)))))))))
+
 (defmacro select (&body clauses)
   "Wait on multiple channel operations, running the body of whichever becomes
 ready first. Each clause is one of:
@@ -21,75 +136,10 @@ ready first. Each clause is one of:
 :TIMEOUT, if present, runs if no other clause becomes ready within
 SECONDS-FORM. At most one of the two may appear. If neither appears, SELECT
 blocks until some clause is ready. SELECT returns whatever the chosen
-clause's body returns."
-  (let (default-thunk-form timeout-form runtime-clause-forms)
-    (dolist (clause clauses)
-      (ecase (if (keywordp (first clause)) (first clause) :operation)
-        (:default
-         (when default-thunk-form
-           (error "SELECT: at most one :DEFAULT clause is allowed"))
-         (destructuring-bind (() &body body) (rest clause)
-           (setf default-thunk-form `(lambda () ,@body))))
-        (:timeout
-         (when timeout-form
-           (error "SELECT: at most one :TIMEOUT clause is allowed"))
-         (destructuring-bind (seconds () &body body) (rest clause)
-           (setf timeout-form `(cons ,seconds (lambda () ,@body)))))
-        (:operation
-         (destructuring-bind ((op &rest op-args) bindings &body body) clause
-           (push
-            (ecase op
-              (recv
-               (destructuring-bind (channel-form) op-args
-                 (destructuring-bind (&optional value-var) bindings
-                   `(list :kind :recv :channel ,channel-form
-                          :handler (lambda (,@(when value-var (list value-var)))
-                                     ,@body)))))
-              (send
-               (destructuring-bind (channel-form value-form) op-args
-                 `(list :kind :send :channel ,channel-form
-                        :value (lambda () ,value-form)
-                        :handler (lambda () ,@body)))))
-            runtime-clause-forms)))))
-    `(%run-select (list ,@(nreverse runtime-clause-forms)) ,default-thunk-form ,timeout-form)))
+clause's body returns.
 
-(defun %try-clause (clause)
-  "Attempt CLAUSE's operation without blocking. Returns a thunk to call for
-its result if it succeeded, or NIL if it would have blocked."
-  (ecase (getf clause :kind)
-    (:recv
-     (multiple-value-bind (value received-p) (try-recv (getf clause :channel))
-       (when received-p
-         (lambda () (funcall (getf clause :handler) value)))))
-    (:send
-     (when (try-send (getf clause :channel) (funcall (getf clause :value)))
-       (getf clause :handler)))))
-
-(defun %run-select (clauses default-thunk timeout)
-  "Runtime engine behind SELECT. TIMEOUT is (SECONDS . THUNK) or NIL. At most
-one of DEFAULT-THUNK and TIMEOUT is non-NIL; the macro enforces that."
-  (let ((waiter (make-semaphore)))
-    (unwind-protect
-        (let ((deadline (when timeout (%deadline-from-timeout (car timeout)))))
-          ;; Registering here, inside the protected form, means a failure
-          ;; partway through (or a non-local exit from a clause's own
-          ;; channel-form) still reaches the cleanup below, which removes the
-          ;; waiter from every clause unconditionally -- including ones it was
-          ;; never actually added to, where DELETE is simply a no-op.
-          (dolist (clause clauses)
-            (%channel-add-waiter (getf clause :channel) waiter))
-          (loop
-            (dolist (clause clauses)
-              (let ((winner (%try-clause clause)))
-                (when winner (return-from %run-select (funcall winner)))))
-            (cond
-              (default-thunk (return-from %run-select (funcall default-thunk)))
-              (deadline
-               (let ((remaining (/ (- deadline (get-internal-real-time))
-                                    (float internal-time-units-per-second 0.0d0))))
-                 (if (<= remaining 0)
-                     (return-from %run-select (funcall (cdr timeout)))
-                     (wait-on-semaphore waiter :timeout remaining))))
-              (t (wait-on-semaphore waiter)))))
-      (dolist (clause clauses)
-        (%channel-remove-waiter (getf clause :channel) waiter)))))
+Expanded entirely at compile time by %EXPAND-SELECT above: every clause's
+TRY-SEND/TRY-RECV probe is inlined directly into the loop body below, so a
+clause running is a direct call, not one more indirection through a stored
+handler thunk looked up by GETF at runtime."
+  (%expand-select clauses))

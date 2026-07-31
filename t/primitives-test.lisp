@@ -1,21 +1,40 @@
 ;;;; t/primitives-test.lisp
 (in-package #:cl-concurrent-kit/test)
 
-(describe "threads"
-  (it "runs its function on another thread and JOIN-THREAD returns its value"
-    (let ((thread (make-thread (lambda () (1+ 2)))))
+(describe
+  "threads"
+  (it
+    "runs its function on another thread and JOIN-THREAD returns its value"
+    (let ((thread
+          (make-thread
+            (lambda ()
+              (1+ 2)))))
       (expect (join-thread thread) :to-be 3)))
-
-  (it "reports THREAD-ALIVE-P false once the thread's function has returned"
+  (it
+    "returns the name supplied to MAKE-THREAD"
+    (let ((thread
+          (make-thread
+            (lambda ()
+              :finished)
+            :name
+            "coverage-thread")))
+      (expect (thread-name thread) :to-equal "coverage-thread")
+      (join-thread thread)))
+  (it
+    "reports THREAD-ALIVE-P false once the thread function has returned"
     (let* ((lock (make-lock))
            (cv (make-condition-variable))
            (go-p nil)
-           (thread (make-thread
-                    (lambda ()
-                      (with-lock-held (lock)
-                        (loop until go-p do (condition-wait cv lock)))))))
+           (thread
+          (make-thread
+            (lambda ()
+              (with-lock-held
+                (lock)
+                (loop until go-p
+                      do (condition-wait cv lock)))))))
       (expect (thread-alive-p thread) :to-be-truthy)
-      (with-lock-held (lock)
+      (with-lock-held
+        (lock)
         (setf go-p t)
         (condition-notify cv))
       (join-thread thread)
@@ -31,76 +50,102 @@
       (expect (thread-name observed-thread) :to-equal "cl-concurrent-kit primitives test thread")
       (expect observed-name :to-equal "cl-concurrent-kit primitives test thread"))))
 
-(describe "locks"
-  (it "serializes access so concurrent increments are not lost"
+(describe
+  "locks"
+  (it
+    "serializes access so concurrent increments are not lost"
     (let ((lock (make-lock))
           (counter 0))
-      (let ((threads (loop repeat 8
-                            collect (make-thread
-                                     (lambda ()
-                                       (dotimes (_ 1000)
-                                         (with-lock-held (lock)
-                                           (incf counter))))))))
+      (let ((threads
+            (loop repeat 8
+                  collect (make-thread
+                (lambda ()
+                  (dotimes (_ 1000)
+                    (with-lock-held (lock) (incf counter))))))))
         (mapc #'join-thread threads))
       (expect counter :to-be 8000))))
 
-(describe "condition variables"
-  (it "wakes a waiter via CONDITION-NOTIFY once the predicate holds"
+(describe
+  "condition variables"
+  (it
+    "wakes a waiter via CONDITION-NOTIFY once the predicate holds"
     (let* ((lock (make-lock))
            (cv (make-condition-variable))
            (ready-p nil)
-           (thread (make-thread
-                    (lambda ()
-                      (with-lock-held (lock)
-                        (loop until ready-p do (condition-wait cv lock))
-                        :saw-it)))))
-      (with-lock-held (lock)
+           (thread
+             (make-thread
+               (lambda ()
+                 (with-lock-held
+                   (lock)
+                   (loop until ready-p
+                         do (condition-wait cv lock))
+                   :saw-it)))))
+      (with-lock-held
+        (lock)
         (setf ready-p t)
         (condition-notify cv))
       (expect (join-thread thread) :to-be :saw-it)))
-
-  (it "CONDITION-WAIT returns NIL, without reacquiring the lock, on timeout"
+  (it
+    "CONDITION-WAIT returns NIL on timeout"
     (let ((lock (make-lock))
           (cv (make-condition-variable)))
-      (with-lock-held (lock)
+      (with-lock-held
+        (lock)
         (expect (condition-wait cv lock :timeout 0.05d0) :to-be nil)))))
 
-(describe "semaphores"
-  (it "blocks in WAIT-ON-SEMAPHORE until SIGNAL-SEMAPHORE"
+(describe
+  "semaphores"
+  (it
+    "blocks in WAIT-ON-SEMAPHORE until SIGNAL-SEMAPHORE"
     (let* ((semaphore (make-semaphore))
-           (thread (make-thread (lambda () (wait-on-semaphore semaphore) :woke))))
+           (thread
+          (make-thread
+            (lambda ()
+              (wait-on-semaphore semaphore)
+              :woke))))
       (signal-semaphore semaphore)
       (expect (join-thread thread) :to-be :woke)))
-
-  (it "WAIT-ON-SEMAPHORE returns NIL on timeout when never signaled"
+  (it
+    "WAIT-ON-SEMAPHORE returns NIL on timeout when never signaled"
     (let ((semaphore (make-semaphore)))
       (expect (wait-on-semaphore semaphore :timeout 0.05d0) :to-be nil))))
 
-(describe "atomic counters"
-  (it "starts at the given initial value"
+(describe
+  "atomic counters"
+  (it
+    "starts at the given initial value"
     (expect (atomic-counter-value (make-atomic-counter 5)) :to-be 5))
-
-  (it "ATOMIC-COUNTER-INCF/DECF are atomic under concurrent access from many threads"
+  (it
+    "ATOMIC-COUNTER-INCF/DECF are atomic under concurrent access from many threads"
     (let* ((counter (make-atomic-counter))
-           (threads (loop repeat 8
-                           collect (make-thread
-                                    (lambda () (dotimes (_ 1000) (atomic-counter-incf counter)))))))
+           (threads
+          (loop repeat 8
+                collect (make-thread
+              (lambda ()
+                (dotimes (_ 1000)
+                  (atomic-counter-incf counter)))))))
       (mapc #'join-thread threads)
       (expect (atomic-counter-value counter) :to-be 8000)
-      (let ((down-threads (loop repeat 8
-                                 collect (make-thread
-                                          (lambda () (dotimes (_ 1000) (atomic-counter-decf counter)))))))
+      (let ((down-threads
+            (loop repeat 8
+                  collect (make-thread
+                (lambda ()
+                  (dotimes (_ 1000)
+                    (atomic-counter-decf counter)))))))
         (mapc #'join-thread down-threads))
       (expect (atomic-counter-value counter) :to-be 0))))
 
 (describe
   "additional primitive behavior"
   (it
-    "accepts JOIN-THREAD's supplied default for a normally completed thread"
-    (let ((thread (make-thread (lambda () :completed))))
+    "accepts the supplied JOIN-THREAD default for a normally completed thread"
+    (let ((thread
+          (make-thread
+            (lambda ()
+              :completed))))
       (expect (join-thread thread :default :failed) :to-be :completed)))
   (it
-    "uses MAKE-SEMAPHORE's initial count as immediately available permits"
+    "uses MAKE-SEMAPHORE initial count as immediately available permits"
     (let ((semaphore (make-semaphore :count 2)))
       (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
       (expect (wait-on-semaphore semaphore :timeout 0.1d0) :to-be-truthy)
@@ -112,23 +157,25 @@
            (ready (make-semaphore))
            (release-p nil)
            (waiters
-             (loop repeat 2
-                   collect (make-thread
-                             (lambda ()
-                               (with-lock-held
-                                 (lock)
-                                 (signal-semaphore ready)
-                                 (loop until release-p
-                                       do (condition-wait condition-variable lock))
-                                 :released))))))
+          (loop repeat 2
+                collect (make-thread
+              (lambda ()
+                (with-lock-held
+                  (lock)
+                  (signal-semaphore ready)
+                  (loop until release-p
+                        do (condition-wait condition-variable lock))
+                  :released))))))
       (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
       (expect (wait-on-semaphore ready :timeout 1) :to-be-truthy)
       (with-lock-held
         (lock)
         (setf release-p t)
         (condition-broadcast condition-variable))
-      (expect (mapcar (function join-thread) waiters)
-              :to-equal (list :released :released))))
+      (expect
+        (mapcar (function join-thread) waiters)
+        :to-equal
+        (list :released :released))))
   (it
     "applies explicit deltas in atomic counter operations"
     (let ((counter (make-atomic-counter)))

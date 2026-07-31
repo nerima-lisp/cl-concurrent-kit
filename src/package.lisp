@@ -87,6 +87,8 @@
    #:promise-already-fulfilled-promise
    #:channel-closed
    #:channel-closed-channel
+   #:executor-shut-down
+   #:executor-shut-down-executor
    #:task-cancelled
    #:task-cancelled-scope
    #:scope-error
