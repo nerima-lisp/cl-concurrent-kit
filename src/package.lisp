@@ -126,6 +126,11 @@
    #:channel-some
    #:channel-every
    #:channel-find
+   #:channel-broadcast
+   #:channel-take
+   #:channel-drop
+   #:channel-take-while
+   #:channel-batch
 
    ;; Conditions
    #:cl-concurrent-kit-error
