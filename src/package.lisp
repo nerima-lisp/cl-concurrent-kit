@@ -132,6 +132,14 @@
    #:channel-take-while
    #:channel-batch
    #:channel-partition-by
+   #:channel-map-concurrent
+   #:channel-map-unordered
+   #:channel-merge
+   #:channel-zip
+   #:channel-concat
+   #:channel-concat-map
+   #:channel-merge-map
+   #:channel-switch-map
 
    ;; Conditions
    #:cl-concurrent-kit-error

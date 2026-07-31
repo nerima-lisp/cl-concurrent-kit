@@ -44,6 +44,9 @@
    #:channel-find
    #:channel-broadcast #:channel-take #:channel-drop #:channel-take-while #:channel-batch
    #:channel-partition-by
+   #:channel-map-concurrent #:channel-map-unordered
+   #:channel-merge #:channel-zip #:channel-concat #:channel-concat-map
+   #:channel-merge-map #:channel-switch-map
    ;; Conditions
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
