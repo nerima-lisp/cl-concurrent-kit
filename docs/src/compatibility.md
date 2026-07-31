@@ -45,13 +45,16 @@ top-level README.)
 - **Error handling:** every blocking operation that accepts `:timeout` signals
   `operation-timed-out` (never returns a sentinel value) on expiry; every
   other failure mode is its own condition (`promise-already-fulfilled`,
-  `channel-closed`, `task-cancelled`, `scope-error`) subclassing
+  `channel-closed`, `task-cancelled`, `scope-error`, `latch-count-underflow`,
+  `barrier-broken`, `promise-cancelled`, `promise-empty-input`,
+  `promise-all-failed`, `executor-queue-full`) subclassing
   `cl-concurrent-kit-error`, so a caller can catch that one base condition to
   handle any failure this library signals without enumerating each one.
 - **Thread safety:** every public struct (`promise`, `channel`, `executor`,
-  `task-scope`) owns its own lock and is safe to share across threads through
-  its documented operations only; none of them is safe to mutate through
-  slot accessors directly (all writer accessors are internal, `%`-prefixed).
+  `task-scope`, `countdown-latch`, `barrier`) owns its own lock and is safe
+  to share across threads through its documented operations only; none of
+  them is safe to mutate through slot accessors directly (all writer
+  accessors are internal, `%`-prefixed).
 - **Resource cleanup:** `make-executor` starts worker threads that outlive
   the call until `shutdown-executor` is called -- there is no finalizer, by
   design, matching `sb-thread`'s own contract; a long-running process that

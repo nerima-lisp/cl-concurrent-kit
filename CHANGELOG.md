@@ -95,6 +95,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an app, both driven by this project's own `run-coverage.lisp` and
   `scripts/verify-lcov.pl`, layered on top of (not instead of)
   cl-nix-forge's generic `mkCoverageReport`.
+- `src/latch.lisp`: `countdown-latch` (Java's `CountDownLatch`) and `barrier`
+  (Java's `CyclicBarrier`), both accepting an optional `:scope` -- passed
+  explicitly exactly as `spawn`'s own `scope` argument is -- so a blocked
+  `await-latch`/`await-barrier` also unblocks with `task-cancelled` (or, for
+  a barrier, `barrier-broken`) when that scope is cancelled.
+- `task-scope` gained a generic waker mechanism (`%scope-add-waker`/
+  `%scope-remove-waker`, `src/scope-state.lisp`): an arbitrary zero-argument
+  callback registered by whatever is currently blocked on the scope's
+  behalf, invoked once, outside the scope's own lock, the same pass that
+  invokes every child's cancel callback. `await-latch`, `await-barrier`, and
+  every reactive stream stage below register one.
+- `cancel-promise`, `promise-catch`, `promise-finally`, `promise-all`,
+  `promise-any`, and `promise-timeout` (`src/promise-combinators.lisp`):
+  further continuation-passing promise combinators built the same way as
+  `promise-then`/`promise-race`/`promise-all-settled` -- no thread, no
+  queue, no blocking wait, settled by whichever input's own settling thread
+  satisfies the combinator first.
+- Executor observability and backpressure (`src/executor.lisp`):
+  `make-executor` accepts `:queue-capacity` to bound its work queue, after
+  which `submit` rejects further work with `executor-queue-full` instead of
+  growing without limit; `try-submit` reports acceptance without needing an
+  `await`; `await-executor-termination` and `executor-shutdown-p`/
+  `executor-terminated-p` expose lifecycle state directly; `executor-queue-depth`/
+  `executor-queue-capacity`/`executor-high-water-mark` expose the queue's
+  live and peak size; `with-executor` scopes an executor's lifetime the way
+  `with-open-file` scopes a stream's; `executor-map` applies a function
+  across a sequence with bounded concurrency and ordered results.
+- A reactive stream layer of around thirty `channel-*` operators built on
+  channels (`src/stream.lisp`, `src/stream-fan-out.lisp`,
+  `src/stream-fan-in.lisp`, `src/stream-partition.lisp`): `channel-producer`,
+  `channel-from-sequence`, `channel-map`, `channel-keep`, `channel-filter`,
+  `channel-distinct-until-changed`, `channel-debounce`, `channel-throttle`,
+  `channel-flat-map`, `channel-scan`, `channel-reduce`, `channel-collect`,
+  `channel-each`, `channel-some`, `channel-every`, `channel-find`,
+  `channel-broadcast`, `channel-take`, `channel-drop`, `channel-take-while`,
+  `channel-batch`, `channel-partition-by`, `channel-map-concurrent`,
+  `channel-map-unordered`, `channel-merge`, `channel-zip`, `channel-concat`,
+  `channel-concat-map`, `channel-merge-map`, and `channel-switch-map`. Every
+  stage owns and closes its output channel and returns a completion promise
+  alongside it; fan-in stages (`channel-merge`, `channel-zip`,
+  `channel-switch-map`, and similar) are built on a small variable-arity
+  sibling of `select` internal to the stream layer, for the same reason
+  `select` itself exists.
 
 ### Changed
 

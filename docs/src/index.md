@@ -32,6 +32,18 @@ cl-concurrent-kit is five layers, each built only on the ones below it:
    `:TIMEOUT` has elapsed) before the scope returns, and that a failed
    task's condition always resurfaces.
 
+Two further pieces build on those five rather than adding a strictly new
+layer of their own:
+
+- **Countdown latches and barriers** (`src/latch.lisp`) -- `COUNTDOWN-LATCH`
+  and `BARRIER`, both able to take an optional `WITH-TASK-SCOPE` `:SCOPE` so
+  a blocked wait unblocks on cancellation the same way `AWAIT` does.
+- **Reactive streams** (`src/stream.lisp` and friends) -- Rx-style `CHANNEL-*`
+  operators (`CHANNEL-MAP`, `CHANNEL-MERGE`, `CHANNEL-DEBOUNCE`, and around
+  thirty more) that compose channels into pipelines, each stage run via
+  `SPAWN` or an executor rather than a hand-written read/transform/write
+  loop.
+
 See [Core concepts](concepts.md) for how they fit together, [Recipes](recipes.md)
 for worked examples, and [Architecture](architecture.md) for the
 implementation decisions behind `SELECT` and the unbuffered channel
