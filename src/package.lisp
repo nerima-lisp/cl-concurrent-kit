@@ -78,6 +78,22 @@
    #:spawn
    #:check-cancelled
 
+   ;; Countdown latches
+   #:make-countdown-latch
+   #:countdown-latch-p
+   #:countdown-latch-count
+   #:count-down
+   #:await-latch
+
+   ;; Cyclic barriers
+   #:make-barrier
+   #:barrier-p
+   #:barrier-parties
+   #:barrier-number-waiting
+   #:barrier-broken-p
+   #:await-barrier
+   #:reset-barrier
+
    ;; Conditions
    #:cl-concurrent-kit-error
    #:operation-timed-out
@@ -92,7 +108,13 @@
    #:task-cancelled
    #:task-cancelled-scope
    #:scope-error
-   #:scope-error-causes))
+   #:scope-error-causes
+   #:latch-count-underflow
+   #:latch-count-underflow-latch
+   #:latch-count-underflow-count
+   #:latch-count-underflow-decrement
+   #:barrier-broken
+   #:barrier-broken-barrier))
 
 ;; SPEED 1 (SBCL's default) is what triggers this, confirmed by bisection: at
 ;; SPEED 0 the whole system compiles in milliseconds; at SPEED 1 or above,

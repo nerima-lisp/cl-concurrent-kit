@@ -83,3 +83,21 @@ oldest first."))
   "Signaled by WITH-TASK-SCOPE when its body completes normally but one or
 more tasks SPAWNed within it failed. Each element of CAUSES is the condition
 a failed task signaled.")
+
+(%define-kit-condition latch-count-underflow
+    ((latch "The countdown latch COUNT-DOWN was called on.")
+     (count "The latch's count before this call.")
+     (decrement "The decrement that would have taken the count below zero."))
+  ("Cannot decrement countdown latch ~S by ~D: only ~D remain."
+   (latch-count-underflow-latch condition)
+   (latch-count-underflow-decrement condition)
+   (latch-count-underflow-count condition))
+  "Signaled by COUNT-DOWN when DECREMENT would reduce a countdown latch's
+count below zero.")
+
+(%define-kit-condition barrier-broken
+    ((barrier "The barrier AWAIT-BARRIER was called on."))
+  ("Barrier ~S is broken; reset it with RESET-BARRIER before using it again."
+   (barrier-broken-barrier condition))
+  "Signaled by AWAIT-BARRIER when another participant timed out or was
+cancelled, or RESET-BARRIER abandoned the current generation.")

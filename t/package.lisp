@@ -26,13 +26,20 @@
    #:make-executor #:executor-p #:submit #:shutdown-executor
    ;; Structured concurrency
    #:with-task-scope #:spawn #:check-cancelled
+   ;; Countdown latches
+   #:make-countdown-latch #:countdown-latch-count #:count-down #:await-latch
+   ;; Cyclic barriers
+   #:make-barrier #:barrier-parties #:barrier-number-waiting #:barrier-broken-p
+   #:await-barrier #:reset-barrier
    ;; Conditions
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
    #:channel-closed #:channel-closed-channel
    #:executor-shut-down #:executor-shut-down-executor
    #:task-cancelled #:task-cancelled-scope
-   #:scope-error #:scope-error-causes)
+   #:scope-error #:scope-error-causes
+   #:latch-count-underflow
+   #:barrier-broken)
   (:export #:run-tests))
 
 (in-package #:cl-concurrent-kit/test)

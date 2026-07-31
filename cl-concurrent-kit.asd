@@ -31,7 +31,8 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "executor")
    (:file "scope-state")
    (:file "scope-execution")
-   (:file "scope"))
+   (:file "scope")
+   (:file "latch"))
   :in-order-to ((test-op (test-op "cl-concurrent-kit/test"))))
 
 ;;; The test system is `cl-concurrent-kit/test` (singular, slash-separated)
@@ -56,7 +57,8 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "channel-test")
    (:file "select-test")
    (:file "executor-test")
-   (:file "scope-test"))
+   (:file "scope-test")
+   (:file "latch-test"))
   :perform (test-op (operation component)
              (declare (ignore operation component))
              (unless (funcall (symbol-function
