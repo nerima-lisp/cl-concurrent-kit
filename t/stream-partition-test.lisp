@@ -27,4 +27,15 @@
       (multiple-value-bind (output completion)
           (channel-partition-by (lambda (x) (declare (ignore x)) :group) input)
         (expect (recv output :timeout 1) :to-equal (list :odd 1 3))
-        (await completion :timeout 1)))))
+        (await completion :timeout 1))))
+
+  (it "runs to completion with a live, uncancelled SCOPE"
+    (let ((input (make-channel :buffer-size 6)))
+      (dolist (x (list 1 1 2 2 2 3)) (send input x))
+      (close-channel input)
+      (with-task-scope (scope)
+        (multiple-value-bind (output completion)
+            (channel-partition-by (function identity) input :scope scope)
+          (expect (loop for value = (recv output :timeout 1) while value collect value)
+                  :to-equal (list (list 1 1) (list 2 2 2) (list 3)))
+          (await completion :timeout 1))))))

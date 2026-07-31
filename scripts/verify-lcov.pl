@@ -37,9 +37,13 @@ my %non_executable_da = map { $_ => 1 } qw(
   primitives.lisp:9 primitives.lisp:30 primitives.lisp:73 primitives.lisp:95 primitives.lisp:141
   fifo.lisp:12 fifo.lisp:15 fifo.lisp:16 fifo.lisp:17 fifo.lisp:18
   fifo.lisp:21 fifo.lisp:22
+  latch.lisp:11 latch.lisp:16 latch.lisp:17 latch.lisp:18 latch.lisp:19
+  latch.lisp:71 latch.lisp:72 latch.lisp:73 latch.lisp:74 latch.lisp:75
+  latch.lisp:76 latch.lisp:77 latch.lisp:80
   promise.lisp:8 promise.lisp:11 promise.lisp:12 promise.lisp:13 promise.lisp:14
   promise.lisp:15 promise.lisp:16 promise.lisp:21 promise.lisp:22
-  promise-combinators.lisp:12 promise-combinators.lisp:17 promise-combinators.lisp:18
+  promise-combinators.lisp:12 promise-combinators.lisp:19 promise-combinators.lisp:20
+  promise-combinators.lisp:21
   channel.lisp:9 channel.lisp:12 channel.lisp:13 channel.lisp:14 channel.lisp:15
   channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19 channel.lisp:20
   channel.lisp:21 channel.lisp:22 channel.lisp:25 channel.lisp:26 channel.lisp:27
@@ -77,14 +81,23 @@ my %non_executable_da = map { $_ => 1 } qw(
   select.lisp:116 select.lisp:117 select.lisp:118 select.lisp:119 select.lisp:120
   select.lisp:121 select.lisp:122 select.lisp:123 select.lisp:124
   executor.lisp:6 executor.lisp:14 executor.lisp:15 executor.lisp:16 executor.lisp:17
-  executor.lisp:18 executor.lisp:20 executor.lisp:21 executor.lisp:22 executor.lisp:44
-  executor.lisp:45 executor.lisp:46 executor.lisp:47 executor.lisp:94 executor.lisp:113
-  executor.lisp:114 executor.lisp:115 executor.lisp:116
+  executor.lisp:20 executor.lisp:21 executor.lisp:22 executor.lisp:23 executor.lisp:25
+  executor.lisp:26 executor.lisp:27 executor.lisp:65 executor.lisp:66 executor.lisp:67
+  executor.lisp:68 executor.lisp:200 executor.lisp:223 executor.lisp:224 executor.lisp:225
+  executor.lisp:226
   scope-state.lisp:10 scope-state.lisp:13 scope-state.lisp:16 scope-state.lisp:17 scope-state.lisp:20
-  scope-state.lisp:26 scope-state.lisp:27 scope-state.lisp:29 scope-state.lisp:32 scope-state.lisp:34
-  scope-state.lisp:35 scope-state.lisp:36
+  scope-state.lisp:28 scope-state.lisp:34 scope-state.lisp:35 scope-state.lisp:37
+  scope-state.lisp:40 scope-state.lisp:42 scope-state.lisp:43 scope-state.lisp:44
   scope-execution.lisp:8
   scope.lisp:14
+  stream.lisp:15 stream.lisp:115 stream.lisp:123 stream.lisp:134 stream.lisp:145
+  stream.lisp:154 stream.lisp:173 stream.lisp:227 stream.lisp:237 stream.lisp:262
+  stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:41 stream-fan-out.lisp:64
+  stream-fan-out.lisp:80 stream-fan-out.lisp:102
+  stream-fan-in.lisp:16 stream-fan-in.lisp:44 stream-fan-in.lisp:138 stream-fan-in.lisp:220
+  stream-fan-in.lisp:255 stream-fan-in.lisp:281 stream-fan-in.lisp:305 stream-fan-in.lisp:330
+  stream-fan-in.lisp:365
+  stream-partition.lisp:6 stream-partition.lisp:8
 );
 my %seen_non_executable_da;
 

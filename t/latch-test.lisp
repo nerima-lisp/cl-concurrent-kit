@@ -46,7 +46,13 @@
             (handler-case (await-latch latch :timeout 1 :scope scope)
               (task-cancelled () (setf cancelled-p t))))
         (scope-error () nil))
-      (expect cancelled-p :to-be-truthy))))
+      (expect cancelled-p :to-be-truthy)))
+
+  (it "signals TASK-CANCELLED immediately when its SCOPE is already cancelled before the call"
+    (let ((latch (make-countdown-latch 1))
+          (scope (cl-concurrent-kit::%make-task-scope)))
+      (cl-concurrent-kit::%scope-cancel scope)
+      (signals task-cancelled (await-latch latch :timeout 1 :scope scope)))))
 
 (describe "barrier"
   (it "releases every party once PARTIES have arrived, 0 to the last"
@@ -122,4 +128,11 @@
       (reset-barrier barrier)
       (expect (barrier-broken-p barrier) :to-be nil)
       (let ((parties (loop repeat 2 collect (future (await-barrier barrier :timeout 1)))))
-        (dolist (party parties) (expect (await party :timeout 1) :to-be-truthy))))))
+        (dolist (party parties) (expect (await party :timeout 1) :to-be-truthy)))))
+
+  (it "signals BARRIER-BROKEN immediately when already broken before the call"
+    (let ((barrier (make-barrier 2)))
+      (signals operation-timed-out (await-barrier barrier :timeout 0.01))
+      (expect (barrier-broken-p barrier) :to-be-truthy)
+      (signals barrier-broken (await-barrier barrier :timeout 1))
+      (expect (barrier-broken-p barrier) :to-be-truthy))))
