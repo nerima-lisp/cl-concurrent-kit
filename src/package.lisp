@@ -131,6 +131,7 @@
    #:channel-drop
    #:channel-take-while
    #:channel-batch
+   #:channel-partition-by
 
    ;; Conditions
    #:cl-concurrent-kit-error

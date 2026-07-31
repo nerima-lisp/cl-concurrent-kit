@@ -43,6 +43,7 @@
    #:channel-reduce #:channel-collect #:channel-each #:channel-some #:channel-every
    #:channel-find
    #:channel-broadcast #:channel-take #:channel-drop #:channel-take-while #:channel-batch
+   #:channel-partition-by
    ;; Conditions
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
