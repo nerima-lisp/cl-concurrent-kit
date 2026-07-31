@@ -7,8 +7,10 @@
   [cl-nix-forge](https://github.com/nerima-lisp/cl-nix-forge), the org's Nix
   packaging library -- a build-time-only, Nix-level dependency with no Lisp
   component.
-- **Platforms:** `x86_64-linux` (verified by CI) and `aarch64-darwin`
-  (verified by the maintainer's local `nix flake check`). See `flake.nix`.
+- **Platforms:** `x86_64-linux` only, verified by CI. `aarch64-darwin` was
+  dropped on 2026-08-01: its only gate was the maintainer's local
+  `nix flake check`, which nobody can observe being skipped. `nix develop` and
+  `nix build` therefore do not work on macOS. See `flake.nix`.
 
 cl-concurrent-kit wraps `sb-thread` and `sb-ext` directly rather than
 depending on bordeaux-threads; see [Architecture](architecture.md) for why.

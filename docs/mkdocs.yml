@@ -51,5 +51,4 @@ nav:
       - Architecture: architecture.md
       - Compatibility: compatibility.md
   - Project:
-      - Changelog: changelog.md
       - Roadmap: roadmap.md

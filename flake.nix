@@ -41,11 +41,19 @@
       ...
     }:
     let
-      # Only platforms actually exercised: x86_64-linux by CI, aarch64-darwin
-      # by the maintainer's own `nix flake check` runs.
+      # The only platform this repository verifies. CI builds and tests
+      # x86_64-linux and nothing else, so the flake declares nothing else: a
+      # platform whose only gate was a maintainer remembering to run
+      # `nix flake check` by hand was never actually gated.
+      #
+      # Consequence, accepted deliberately on 2026-08-01: mkPackageFlake
+      # generates EVERY per-system output from this one list -- packages,
+      # checks, apps and devShells alike -- so dropping aarch64-darwin also
+      # drops devShells.aarch64-darwin. `nix develop` and `nix build` therefore
+      # do not work on macOS; development happens on Linux. See
+      # PACKAGE_STANDARD.md, section "systems".
       systems = [
         "x86_64-linux"
-        "aarch64-darwin"
       ];
 
       # mkPackageFlake spans every declared system on its own (it takes

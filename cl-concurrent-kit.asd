@@ -1,4 +1,12 @@
 ;;;; cl-concurrent-kit.asd
+
+;;; This form comes FIRST, before any defsystem. ASDF binds *package* to
+;;; ASDF-USER only for a file it loads itself; read any other way -- a REPL
+;;; `load`, an editor evaluating the buffer, flake.nix parsing :version -- the
+;;; file is read in whatever package happens to be current. Saying it makes
+;;; the file self-contained.
+(in-package #:asdf-user)
+
 (asdf:defsystem "cl-concurrent-kit"
   :description "Dependency-free, SBCL-only concurrency toolkit built directly on sb-thread"
   :long-description "cl-concurrent-kit wraps sb-thread/sb-ext into the small
