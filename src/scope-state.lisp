@@ -18,6 +18,14 @@
   ;; Active child records, keyed by the child object itself. Completed
   ;; children remove themselves so their cancellation closures are not retained.
   (children (make-hash-table :test (function eq)) :read-only t)
+  ;; Thunks registered by non-child waiters (e.g. AWAIT-LATCH/AWAIT-BARRIER
+  ;; via their optional :SCOPE argument) that want to be called once when
+  ;; SCOPE is cancelled, keyed by the thunk itself so the same closure can be
+  ;; removed again in an UNWIND-PROTECT once its own wait ends. Unlike a
+  ;; child, a waker is not "spawned work" -- it does not block
+  ;; %SCOPE-AWAIT-CHILDREN and is never rejected for arriving after SCOPE
+  ;; started closing, only after it is fully CANCELLED-P.
+  (wakers (make-hash-table :test (function eq)) :read-only t)
   ;; True from the moment WITH-TASK-SCOPE's body has returned or signalled,
   ;; even before every child already running has been cancelled and awaited.
   ;; %SCOPE-ADD-CHILD checks this -- not just CANCELLED-P -- so a child that
@@ -52,17 +60,39 @@ returns or signals, before it starts waiting for those children."
     (setf (task-scope-closing-p scope) t)))
 
 (defun %scope-cancel (scope)
-  "Mark SCOPE cancelled and request cancellation of its active children."
-  (let ((cancellers nil))
+  "Mark SCOPE cancelled and request cancellation of its active children and
+registered wakers."
+  (let ((cancellers nil)
+        (wakers nil))
     (%with-scope-lock (scope)
       (unless (task-scope-cancelled-p scope)
         (setf (task-scope-cancelled-p scope) t
               cancellers
               (loop for child being the hash-keys of (task-scope-children scope)
                     for cancel = (%scope-child-cancel child)
-                    when cancel collect cancel))))
+                    when cancel collect cancel)
+              wakers
+              (loop for waker being the hash-keys of (task-scope-wakers scope)
+                    collect waker))))
     (dolist (cancel cancellers)
-      (funcall cancel))))
+      (funcall cancel))
+    (dolist (waker wakers)
+      (funcall waker))))
+
+(defun %scope-add-waker (scope waker)
+  "Register WAKER (a thunk) to be called once SCOPE is cancelled. If SCOPE is
+already cancelled, WAKER runs immediately instead of being registered."
+  (let ((cancel-now nil))
+    (%with-scope-lock (scope)
+      (if (task-scope-cancelled-p scope)
+          (setf cancel-now t)
+          (setf (gethash waker (task-scope-wakers scope)) t)))
+    (when cancel-now
+      (funcall waker))))
+
+(defun %scope-remove-waker (scope waker)
+  (%with-scope-lock (scope)
+    (remhash waker (task-scope-wakers scope))))
 
 (defun %scope-record-failure (scope condition)
   (%with-scope-lock (scope)

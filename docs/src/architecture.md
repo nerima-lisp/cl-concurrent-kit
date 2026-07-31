@@ -97,6 +97,43 @@ exactly as a running one does; `%SPAWN-THREAD-CHILD` runs on a dedicated
 thread via `%DELIVER-ON-THREAD` (`src/promise.lisp`), the same
 run-a-thunk-on-a-thread-and-settle-a-promise primitive `FUTURE` uses.
 
+## A generic waker joins cancellation to arbitrary blocked waits
+
+`CHECK-CANCELLED` covers a task that polls for cancellation between steps,
+but `AWAIT-LATCH`, `AWAIT-BARRIER`, and every reactive stream stage instead
+block on their *own* condition variable -- one cancellation cannot signal
+directly. `src/scope-state.lisp` generalizes `%SCOPE-CHILD-CANCEL`'s existing
+per-child callback into a `WAKERS` hash-table on `TASK-SCOPE` itself:
+`%SCOPE-ADD-WAKER` registers an arbitrary zero-argument callback (calling it
+immediately, instead, if the scope is already cancelled), and `%SCOPE-CANCEL`
+invokes every registered waker exactly once, outside the scope's own lock,
+the same pass it uses to invoke every child's cancel callback. A blocked
+`AWAIT-LATCH` registers a waker that signals its own condition variable; a
+stream stage registers one that closes its output channel. Both unregister
+via `%SCOPE-REMOVE-WAKER` in an `UNWIND-PROTECT`, so a wait that finishes
+before cancellation leaves nothing behind to fire later.
+
+## Variable-arity SELECT for stream fan-in
+
+`SELECT` (`src/select.lisp`) is a macro: its clause count and shape must be
+known at macroexpansion time, which is exactly wrong for `CHANNEL-MERGE`,
+`CHANNEL-ZIP`, and similar stages that fan in from a runtime-determined list
+of channels. `src/stream-fan-in.lisp`'s `%RUN-DYNAMIC-SELECT` reimplements
+`SELECT`'s registration/retry/cleanup protocol as an ordinary function over a
+list of `(CHANNEL . HANDLER)` conses instead: register one waiter semaphore
+on every channel, loop trying each clause non-blockingly, sleep on the
+semaphore between attempts, and remove the waiter from every channel in an
+`UNWIND-PROTECT` on the way out -- the same shape as `SELECT` itself, deliberately,
+just driven by a runtime list rather than clauses baked into the expansion.
+
+A `SELECT` clause body is spliced directly inside `SELECT`'s own probing
+`LOOP`, which -- like any `LOOP` -- establishes its own implicit block named
+`NIL`. A bare `(RETURN)` written inside a clause body exits *that* loop, not
+an enclosing one the caller happens to have of their own; `CHANNEL-DEBOUNCE`
+needed an explicit named `BLOCK`/`RETURN-FROM` around its own outer loop for
+exactly this reason. See `src/select.lisp`'s own docstring for the full
+explanation.
+
 ## One lock per struct, one macro per lock
 
 `CHANNEL`, `%WORK-QUEUE`, and `TASK-SCOPE` each guard their own mutable state

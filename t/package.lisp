@@ -13,8 +13,10 @@
    #:make-semaphore #:wait-on-semaphore #:signal-semaphore
    #:make-atomic-counter #:atomic-counter-value #:atomic-counter-incf #:atomic-counter-decf
    ;; Promises / futures
-   #:make-promise #:promise-p #:promise-settled-p #:deliver #:deliver-error #:await #:future
-   #:promise-then #:promise-race #:promise-all-settled
+   #:make-promise #:promise-p #:promise-settled-p #:deliver #:deliver-error #:cancel-promise
+   #:await #:future
+   #:promise-then #:promise-catch #:promise-finally #:promise-race #:promise-all-settled
+   #:promise-all #:promise-any #:promise-timeout
    #:promise-settlement-p #:promise-settlement-state #:promise-settlement-value
    #:promise-settlement-condition
    ;; Channels
@@ -23,16 +25,40 @@
    ;; Select
    #:select
    ;; Executors
-   #:make-executor #:executor-p #:submit #:shutdown-executor
+   #:make-executor #:executor-p #:submit #:try-submit #:shutdown-executor
+   #:await-executor-termination #:with-executor #:executor-map
+   #:executor-shutdown-p #:executor-terminated-p
+   #:executor-queue-capacity #:executor-queue-depth #:executor-high-water-mark
    ;; Structured concurrency
    #:with-task-scope #:spawn #:check-cancelled
+   ;; Countdown latches
+   #:make-countdown-latch #:countdown-latch-count #:count-down #:await-latch
+   ;; Cyclic barriers
+   #:make-barrier #:barrier-parties #:barrier-number-waiting #:barrier-broken-p
+   #:await-barrier #:reset-barrier
+   ;; Reactive streams
+   #:channel-producer #:channel-from-sequence
+   #:channel-map #:channel-keep #:channel-filter #:channel-distinct-until-changed
+   #:channel-debounce #:channel-flat-map #:channel-throttle #:channel-scan
+   #:channel-reduce #:channel-collect #:channel-each #:channel-some #:channel-every
+   #:channel-find
+   #:channel-broadcast #:channel-take #:channel-drop #:channel-take-while #:channel-batch
+   #:channel-partition-by
+   #:channel-map-concurrent #:channel-map-unordered
+   #:channel-merge #:channel-zip #:channel-concat #:channel-concat-map
+   #:channel-merge-map #:channel-switch-map
    ;; Conditions
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
    #:channel-closed #:channel-closed-channel
    #:executor-shut-down #:executor-shut-down-executor
    #:task-cancelled #:task-cancelled-scope
-   #:scope-error #:scope-error-causes)
+   #:scope-error #:scope-error-causes
+   #:latch-count-underflow
+   #:barrier-broken
+   #:promise-cancelled #:promise-cancelled-promise #:promise-cancelled-reason
+   #:promise-empty-input #:promise-all-failed #:promise-all-failed-causes
+   #:executor-queue-full #:executor-queue-full-executor #:executor-queue-full-capacity)
   (:export #:run-tests))
 
 (in-package #:cl-concurrent-kit/test)

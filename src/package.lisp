@@ -49,9 +49,15 @@
    #:promise-settlement-condition
    #:deliver
    #:deliver-error
+   #:cancel-promise
    #:await
    #:promise-then
+   #:promise-catch
+   #:promise-finally
    #:promise-race
+   #:promise-all
+   #:promise-any
+   #:promise-timeout
    #:future
 
    ;; Channels (CSP)
@@ -71,12 +77,69 @@
    #:make-executor
    #:executor-p
    #:submit
+   #:try-submit
    #:shutdown-executor
+   #:await-executor-termination
+   #:with-executor
+   #:executor-map
+   #:executor-shutdown-p
+   #:executor-terminated-p
+   #:executor-queue-capacity
+   #:executor-queue-depth
+   #:executor-high-water-mark
 
    ;; Structured concurrency
    #:with-task-scope
    #:spawn
    #:check-cancelled
+
+   ;; Countdown latches
+   #:make-countdown-latch
+   #:countdown-latch-p
+   #:countdown-latch-count
+   #:count-down
+   #:await-latch
+
+   ;; Cyclic barriers
+   #:make-barrier
+   #:barrier-p
+   #:barrier-parties
+   #:barrier-number-waiting
+   #:barrier-broken-p
+   #:await-barrier
+   #:reset-barrier
+
+   ;; Reactive streams (built on channels)
+   #:channel-producer
+   #:channel-from-sequence
+   #:channel-map
+   #:channel-keep
+   #:channel-filter
+   #:channel-distinct-until-changed
+   #:channel-debounce
+   #:channel-flat-map
+   #:channel-throttle
+   #:channel-scan
+   #:channel-reduce
+   #:channel-collect
+   #:channel-each
+   #:channel-some
+   #:channel-every
+   #:channel-find
+   #:channel-broadcast
+   #:channel-take
+   #:channel-drop
+   #:channel-take-while
+   #:channel-batch
+   #:channel-partition-by
+   #:channel-map-concurrent
+   #:channel-map-unordered
+   #:channel-merge
+   #:channel-zip
+   #:channel-concat
+   #:channel-concat-map
+   #:channel-merge-map
+   #:channel-switch-map
 
    ;; Conditions
    #:cl-concurrent-kit-error
@@ -92,7 +155,23 @@
    #:task-cancelled
    #:task-cancelled-scope
    #:scope-error
-   #:scope-error-causes))
+   #:scope-error-causes
+   #:latch-count-underflow
+   #:latch-count-underflow-latch
+   #:latch-count-underflow-count
+   #:latch-count-underflow-decrement
+   #:barrier-broken
+   #:barrier-broken-barrier
+   #:promise-cancelled
+   #:promise-cancelled-promise
+   #:promise-cancelled-reason
+   #:promise-empty-input
+   #:promise-empty-input-operation
+   #:promise-all-failed
+   #:promise-all-failed-causes
+   #:executor-queue-full
+   #:executor-queue-full-executor
+   #:executor-queue-full-capacity))
 
 ;; SPEED 1 (SBCL's default) is what triggers this, confirmed by bisection: at
 ;; SPEED 0 the whole system compiles in milliseconds; at SPEED 1 or above,

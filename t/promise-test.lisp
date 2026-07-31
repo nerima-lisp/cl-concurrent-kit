@@ -72,7 +72,30 @@
               (declare (ignore state outcome))
               (vector-push-extend value observed)))))
       (deliver promise :value)
-      (progn (expect (length observed) :to-be 3) (expect (aref observed 0) :to-be :first) (expect (aref observed 1) :to-be :second) (expect (aref observed 2) :to-be :third)))))
+      (progn (expect (length observed) :to-be 3) (expect (aref observed 0) :to-be :first) (expect (aref observed 1) :to-be :second) (expect (aref observed 2) :to-be :third))))
+  (it
+    "UNOBSERVE-PROMISE removes a non-first observer without disturbing the others"
+    (let ((promise (make-promise))
+          (observed (list)))
+      (let ((first-observer (lambda (state outcome) (declare (ignore state outcome)) (push :first observed)))
+            (second-observer (lambda (state outcome) (declare (ignore state outcome)) (push :second observed))))
+        (cl-concurrent-kit::%observe-promise promise first-observer)
+        (cl-concurrent-kit::%observe-promise promise second-observer)
+        (cl-concurrent-kit::%unobserve-promise promise second-observer)
+        (deliver promise :value)
+        (expect observed :to-equal (list :first)))))
+  (it
+    "DELIVER-IF-PENDING is a no-op against an already-settled promise"
+    (let ((promise (make-promise)))
+      (deliver promise 1)
+      (cl-concurrent-kit::%deliver-if-pending promise 2)
+      (expect (await promise) :to-be 1)))
+  (it
+    "DELIVER-ERROR-IF-PENDING is a no-op against an already-settled promise"
+    (let ((promise (make-promise)))
+      (deliver promise 1)
+      (cl-concurrent-kit::%deliver-error-if-pending promise (make-condition (quote error)))
+      (expect (await promise) :to-be 1))))
 
 (describe "promise-all-settled"
   (it "settles immediately with an empty list for no input promises"
@@ -216,3 +239,168 @@
     "propagates an error signaled in its body to AWAIT"
     (let ((f (future (error "boom in future"))))
       (signals error (await f)))))
+
+(describe "cancel-promise"
+  (it "settles a pending promise as failed with PROMISE-CANCELLED"
+    (let ((promise (make-promise)))
+      (cancel-promise promise :because)
+      (handler-case (progn (await promise) (error "AWAIT should have signaled"))
+        (promise-cancelled (condition)
+          (expect (eq (promise-cancelled-promise condition) promise) :to-be-truthy)
+          (expect (promise-cancelled-reason condition) :to-be :because)))))
+
+  (it "signals PROMISE-ALREADY-FULFILLED against an already-settled promise"
+    (let ((promise (make-promise)))
+      (deliver promise 1)
+      (signals promise-already-fulfilled (cancel-promise promise)))))
+
+(describe "promise-catch"
+  (it "passes a fulfilled promise's value through unchanged"
+    (let ((promise (make-promise)))
+      (deliver promise 42)
+      (expect (await (promise-catch promise (lambda (c) (declare (ignore c)) :wrong-branch)))
+              :to-be 42)))
+
+  (it "settles the result with ON-REJECTED's return value when the input fails"
+    (let ((promise (make-promise))
+          (condition (make-condition 'simple-error :format-control "boom")))
+      (deliver-error promise condition)
+      (expect (await (promise-catch promise (lambda (c) (list :recovered (eq c condition)))))
+              :to-equal (list :recovered t))))
+
+  (it "fails the result when ON-REJECTED itself signals"
+    (let ((promise (make-promise)))
+      (deliver-error promise (make-condition 'simple-error :format-control "boom"))
+      (let ((chained (promise-catch promise (lambda (c) (declare (ignore c)) (error "in handler")))))
+        (signals error (await chained))))))
+
+(describe "promise-finally"
+  (it "runs FUNCTION and mirrors a fulfilled input's own value, not FUNCTION's"
+    (let ((promise (make-promise))
+          (ran-p nil))
+      (deliver promise 42)
+      (expect (await (promise-finally promise (lambda () (setf ran-p t) :ignored))) :to-be 42)
+      (expect ran-p :to-be-truthy)))
+
+  (it "runs FUNCTION and mirrors a failed input's own condition, not FUNCTION's return"
+    (let ((promise (make-promise))
+          (condition (make-condition 'simple-error :format-control "boom"))
+          (ran-p nil))
+      (deliver-error promise condition)
+      (let ((chained (promise-finally promise (lambda () (setf ran-p t) :ignored))))
+        (handler-case (progn (await chained) (error "AWAIT should have re-signaled"))
+          (error (c) (expect (eq c condition) :to-be-truthy))))
+      (expect ran-p :to-be-truthy)))
+
+  (it "fails the result when FUNCTION itself signals, even for a fulfilled input"
+    (let ((promise (make-promise)))
+      (deliver promise 1)
+      (let ((chained (promise-finally promise (lambda () (error "in finally")))))
+        (signals error (await chained))))))
+
+(describe "promise-all"
+  (it "fulfills immediately with NIL for no input promises"
+    (expect (await (promise-all nil) :timeout 1) :to-be nil))
+
+  (it "fulfills with every value in input order once all inputs fulfill"
+    (let ((promises (list (make-promise) (make-promise) (make-promise))))
+      (let ((combined (promise-all promises)))
+        (deliver (third promises) 3)
+        (deliver (first promises) 1)
+        (deliver (second promises) 2)
+        (expect (await combined :timeout 1) :to-equal (list 1 2 3)))))
+
+  (it "fails as soon as any input fails, without waiting for the rest"
+    (let* ((never-settles (make-promise))
+           (failing (make-promise))
+           (condition (make-condition 'simple-error :format-control "boom"))
+           (combined (promise-all (list never-settles failing))))
+      (deliver-error failing condition)
+      (handler-case (progn (await combined :timeout 1) (error "AWAIT should have re-signaled"))
+        (error (c) (expect (eq c condition) :to-be-truthy)))))
+
+  (it "unregisters an observer registered on a still-pending input after the outcome is already decided"
+    (let* ((already-failed (make-promise))
+           (pending (make-promise))
+           (condition (make-condition 'simple-error :format-control "boom")))
+      ;; ALREADY-FAILED is settled BEFORE PROMISE-ALL is even called, so its
+      ;; observer fires -- and decides the aggregate -- synchronously inside
+      ;; PROMISE-ALL's own registration loop, before PENDING's observer is
+      ;; ever registered.
+      (deliver-error already-failed condition)
+      (let ((combined (promise-all (list already-failed pending))))
+        (handler-case (progn (await combined :timeout 1) (error "AWAIT should have re-signaled"))
+          (error (c) (expect (eq c condition) :to-be-truthy)))
+        ;; PENDING's observer was unregistered as soon as it was registered,
+        ;; since the outcome was already decided by ALREADY-FAILED --
+        ;; delivering it now must not raise or otherwise disturb the
+        ;; already-settled result.
+        (deliver pending :too-late)
+        (expect (promise-settled-p combined) :to-be-truthy)))))
+
+(describe "promise-any"
+  (it "signals PROMISE-EMPTY-INPUT for no input promises"
+    (signals promise-empty-input (promise-any nil)))
+
+  (it "fulfills with whichever input fulfills first"
+    (let ((promises (list (make-promise) (make-promise))))
+      (let ((first-to-win (promise-any promises)))
+        (deliver (second promises) :winner)
+        (expect (await first-to-win :timeout 1) :to-be :winner))))
+
+  (it "fails with PROMISE-ALL-FAILED once every input has failed"
+    (let* ((first-input (make-promise))
+           (second-input (make-promise))
+           (first-condition (make-condition 'simple-error :format-control "first"))
+           (second-condition (make-condition 'simple-error :format-control "second"))
+           (combined (promise-any (list first-input second-input))))
+      (deliver-error first-input first-condition)
+      (deliver-error second-input second-condition)
+      (handler-case (progn (await combined :timeout 1) (error "AWAIT should have signaled"))
+        (promise-all-failed (condition)
+          (expect (promise-all-failed-causes condition)
+                  :to-equal (list first-condition second-condition))))))
+
+  (it "unregisters an observer registered on a still-pending input after the outcome is already decided"
+    (let ((already-fulfilled (make-promise))
+          (pending (make-promise)))
+      ;; ALREADY-FULFILLED is settled BEFORE PROMISE-ANY is even called, so
+      ;; its observer fires -- and decides the winner -- synchronously inside
+      ;; PROMISE-ANY's own registration loop, before PENDING's observer is
+      ;; ever registered.
+      (deliver already-fulfilled :winner)
+      (let ((combined (promise-any (list already-fulfilled pending))))
+        (expect (await combined :timeout 1) :to-be :winner)
+        ;; PENDING's observer was unregistered as soon as it was registered,
+        ;; since the outcome was already decided by ALREADY-FULFILLED --
+        ;; delivering it now must not raise or otherwise disturb the result.
+        (deliver pending :too-late)
+        (expect (await combined :timeout 1) :to-be :winner)))))
+
+(describe "promise-timeout"
+  (it "mirrors a promise that settles before the timeout elapses"
+    (let ((promise (make-promise)))
+      (deliver promise :in-time)
+      (expect (await (promise-timeout promise 1) :timeout 1) :to-be :in-time)))
+
+  (it "signals OPERATION-TIMED-OUT once the timeout elapses first"
+    (let ((promise (make-promise)))
+      (signals operation-timed-out (await (promise-timeout promise 0.01) :timeout 1))))
+
+  (it "mirrors a promise that fails before the timeout elapses"
+    (let ((promise (make-promise))
+          (condition (make-condition 'simple-error :format-control "boom")))
+      (deliver-error promise condition)
+      (handler-case (progn (await (promise-timeout promise 1) :timeout 1) (error "AWAIT should have re-signaled"))
+        (error (c) (expect (eq c condition) :to-be-truthy)))))
+
+  (it "does not resettle the timed-out result when the source delivers late"
+    (let ((promise (make-promise)))
+      (let ((timed (promise-timeout promise 0.01)))
+        (signals operation-timed-out (await timed :timeout 1))
+        ;; PROMISE-TIMEOUT's observer already unregistered itself on timeout,
+        ;; so delivering PROMISE afterward must not raise anything -- its own
+        ;; delivery attempt against the already-settled TIMED is silently
+        ;; ignored rather than propagating PROMISE-ALREADY-FULFILLED.
+        (deliver promise :too-late)
+        (signals operation-timed-out (await timed :timeout 1))))))

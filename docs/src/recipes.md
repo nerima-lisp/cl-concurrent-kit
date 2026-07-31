@@ -144,3 +144,92 @@ wherever your task can safely stop -- typically the top of a loop:
 
 If the first task fails, the second observes `TASK-CANCELLED` at its next
 `CHECK-CANCELLED` and unwinds instead of processing the remaining items.
+
+## Backpressure with a bounded executor
+
+`MAKE-EXECUTOR`'s `:QUEUE-CAPACITY` turns an unbounded queue into a bound a
+fast producer cannot outrun. `TRY-SUBMIT` reports whether work was accepted
+without needing to `AWAIT` a rejected promise just to find out:
+
+```lisp
+(let ((executor (cl-concurrent-kit:make-executor :size 4 :queue-capacity 100)))
+  (unwind-protect
+      (dolist (job jobs)
+        (multiple-value-bind (promise accepted-p) (cl-concurrent-kit:try-submit executor job)
+          (declare (ignore promise))
+          (unless accepted-p (requeue-later job))))
+    (cl-concurrent-kit:shutdown-executor executor :wait t)))
+```
+
+`WITH-EXECUTOR` covers the common case of `MAKE-EXECUTOR` immediately
+followed by an `UNWIND-PROTECT`'d `SHUTDOWN-EXECUTOR`:
+
+```lisp
+(cl-concurrent-kit:with-executor (executor :size 4)
+  (mapcar #'cl-concurrent-kit:await
+          (loop for job in jobs collect (cl-concurrent-kit:submit executor job))))
+```
+
+## Waiting for the first success, or every failure
+
+`PROMISE-ALL` fails fast on the first rejection, mirroring `MAPCAR` over
+`AWAIT`; `PROMISE-ANY` instead resolves as soon as any input fulfills, and
+only fails -- with `PROMISE-ALL-FAILED` -- once every input has:
+
+```lisp
+(cl-concurrent-kit:await
+ (cl-concurrent-kit:promise-any
+  (mapcar (lambda (mirror) (cl-concurrent-kit:future (fetch mirror))) mirrors)))
+```
+
+## Coordinating start with a latch, phases with a barrier
+
+`COUNTDOWN-LATCH` holds several workers at a starting line until a shared
+setup step finishes:
+
+```lisp
+(let ((ready (cl-concurrent-kit:make-countdown-latch 1)))
+  (cl-concurrent-kit:with-task-scope (scope)
+    (dotimes (i worker-count)
+      (cl-concurrent-kit:spawn
+       scope
+       (lambda ()
+         (cl-concurrent-kit:await-latch ready :scope scope)
+         (run-worker i))))
+    (setup-shared-state)
+    (cl-concurrent-kit:count-down ready)))
+```
+
+`BARRIER` instead resynchronizes a fixed set of parties at the end of every
+phase, in a loop, since it releases and starts a fresh generation on its own:
+
+```lisp
+(let ((barrier (cl-concurrent-kit:make-barrier worker-count)))
+  (cl-concurrent-kit:with-task-scope (scope)
+    (dotimes (i worker-count)
+      (cl-concurrent-kit:spawn
+       scope
+       (lambda ()
+         (dotimes (phase phase-count)
+           (run-phase i phase)
+           (cl-concurrent-kit:await-barrier barrier :scope scope)))))))
+```
+
+## A reactive stream pipeline
+
+The `CHANNEL-*` stream operators chain like the manual pipeline stage above,
+without hand-writing each stage's read/transform/write loop:
+
+```lisp
+(cl-concurrent-kit:with-task-scope (scope)
+  (let* ((source (cl-concurrent-kit:channel-from-sequence readings :scope scope))
+         (valid (cl-concurrent-kit:channel-filter #'valid-reading-p source :scope scope))
+         (smoothed (cl-concurrent-kit:channel-debounce 0.1 valid :scope scope))
+         (results (cl-concurrent-kit:channel-map #'analyze smoothed :scope scope)))
+    (cl-concurrent-kit:await (cl-concurrent-kit:channel-collect results :scope scope))))
+```
+
+Passing the same `:SCOPE` to every stage means cancelling it -- e.g. because
+an earlier stage failed -- closes every stage's output promptly rather than
+leaving a downstream `RECV` blocked on a producer that will never write to it
+again.

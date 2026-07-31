@@ -8,7 +8,9 @@ Not yet built, and not promised for a specific release:
   cancellation until it returns to a point that calls `CHECK-CANCELLED`
   itself.
 - **Buffered-channel backpressure metrics** (current depth, high-water mark)
-  for observability.
+  for observability. Executors gained the equivalent for their own work
+  queue (`EXECUTOR-QUEUE-DEPTH`/`EXECUTOR-HIGH-WATER-MARK`); a plain
+  `CHANNEL` still has no such introspection.
 - Porting `src/primitives.lisp` to another implementation is out of scope for
   this project (see [Compatibility](compatibility.md)) but would be the only
   file that needs it.

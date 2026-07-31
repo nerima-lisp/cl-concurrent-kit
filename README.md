@@ -7,9 +7,12 @@
 A dependency-free, SBCL-only concurrency toolkit. It wraps `sb-thread` into
 the primitives a portability layer such as bordeaux-threads would offer
 (threads, locks, condition variables, semaphores), then builds the
-concurrency shapes familiar from modern languages on top: promises/futures,
-CSP channels with `select`, a fixed-size executor, and structured-concurrency
-scopes with cooperative cancellation.
+concurrency shapes familiar from modern languages on top: promises/futures
+with `.then()`-style combinators, CSP channels with `select`, a fixed-size
+executor with bounded queues and observability, structured-concurrency
+scopes with cooperative cancellation, countdown latches and cyclic barriers,
+and a reactive stream layer of `CHANNEL-*` operators (map/filter/merge/zip
+and the rest) built on top of channels.
 
 Full documentation is published at <https://nerima-lisp.github.io/cl-concurrent-kit/>.
 The source for that site lives in [docs/src/](docs/src/).

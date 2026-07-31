@@ -40,4 +40,25 @@
                                                      (make-condition 'simple-error
                                                                      :format-control "second")))))
       (expect (princ-to-string condition) :to-satisfy
-              (lambda (report) (and (search "2 task" report) (search "first" report)))))))
+              (lambda (report) (and (search "2 task" report) (search "first" report))))))
+
+  (it "BARRIER-BROKEN reports the broken barrier"
+    (let* ((barrier (make-barrier 1))
+           (condition (make-condition 'barrier-broken :barrier barrier)))
+      (expect (princ-to-string condition) :to-satisfy
+              (lambda (report) (search "broken" report)))))
+
+  (it "PROMISE-CANCELLED reports the cancelled promise and its reason"
+    (let* ((promise (make-promise))
+           (condition (make-condition 'promise-cancelled :promise promise :reason :because)))
+      (expect (princ-to-string condition) :to-satisfy
+              (lambda (report) (and (search "cancelled" report) (search "BECAUSE" report))))))
+
+  (it "PROMISE-ALL-FAILED reports the first cause"
+    (let ((condition (make-condition 'promise-all-failed
+                                      :causes (list (make-condition 'simple-error
+                                                                     :format-control "first")
+                                                     (make-condition 'simple-error
+                                                                     :format-control "second")))))
+      (expect (princ-to-string condition) :to-satisfy
+              (lambda (report) (search "first" report))))))

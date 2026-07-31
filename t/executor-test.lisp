@@ -299,3 +299,182 @@
         (unless (wait-on-semaphore finished :timeout 1)
           (error "executor worker did not finish"))
         (shutdown-executor executor :wait t :timeout 1)))))
+
+(describe "executor observability"
+  (it "reports EXECUTOR-SHUTDOWN-P and EXECUTOR-TERMINATED-P across their lifecycle"
+    (let ((executor (make-executor :size 1)))
+      (expect (executor-shutdown-p executor) :to-be nil)
+      (expect (executor-terminated-p executor) :to-be nil)
+      (shutdown-executor executor :wait t :timeout 1)
+      (expect (executor-shutdown-p executor) :to-be-truthy)
+      (expect (executor-terminated-p executor) :to-be-truthy)))
+
+  (it "reports EXECUTOR-QUEUE-CAPACITY as NIL for the default unbounded executor"
+    (let ((executor (make-executor :size 1)))
+      (unwind-protect
+          (expect (executor-queue-capacity executor) :to-be nil)
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "tracks EXECUTOR-QUEUE-DEPTH and EXECUTOR-HIGH-WATER-MARK as tasks queue and drain"
+    (let ((executor (make-executor :size 1))
+          (release (make-semaphore))
+          (started (make-semaphore))
+          (queued (make-semaphore)))
+      (unwind-protect
+          (progn
+            ;; Occupy the sole worker, and confirm it has actually claimed
+            ;; this task before submitting the next two -- otherwise all
+            ;; three could still be sitting in the queue together when a
+            ;; slow-to-schedule worker thread finally starts, making the
+            ;; peak depth below 3 rather than the 2 this asserts.
+            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
+            (wait-or-fail started "first task did not start")
+            (submit executor (lambda () (signal-semaphore queued)))
+            (submit executor (lambda () (signal-semaphore queued)))
+            (loop until (>= (executor-queue-depth executor) 2) do (sleep 0.001))
+            (expect (executor-queue-depth executor) :to-be 2)
+            (expect (executor-high-water-mark executor) :to-be 2)
+            (signal-semaphore release)
+            (wait-or-fail queued "first queued task did not run")
+            (wait-or-fail queued "second queued task did not run")
+            (loop until (zerop (executor-queue-depth executor)) do (sleep 0.001))
+            (expect (executor-queue-depth executor) :to-be 0)
+            (expect (executor-high-water-mark executor) :to-be 2))
+        ;; Unblock the first task even if an EXPECT above failed and
+        ;; unwound before its own (SIGNAL-SEMAPHORE RELEASE) ran -- an extra
+        ;; signal here is harmless once the happy path already consumed the
+        ;; first one, but skipping it entirely would leave the worker
+        ;; blocked forever and SHUTDOWN-EXECUTOR :WAIT T below hanging with
+        ;; it instead of reporting the real EXPECT failure.
+        (signal-semaphore release)
+        (shutdown-executor executor :wait t :timeout 1)))))
+
+(describe "bounded executor queue"
+  (it "reports the configured EXECUTOR-QUEUE-CAPACITY"
+    (let ((executor (make-executor :size 1 :queue-capacity 2)))
+      (unwind-protect
+          (expect (executor-queue-capacity executor) :to-be 2)
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "rejects SUBMIT once the queue is full, settling the promise with EXECUTOR-QUEUE-FULL"
+    (let ((executor (make-executor :size 1 :queue-capacity 1))
+          (release (make-semaphore))
+          (started (make-semaphore)))
+      (unwind-protect
+          (progn
+            ;; See the TRY-SUBMIT test above for why this confirms the sole
+            ;; worker has claimed task1 before submitting task2.
+            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
+            (wait-or-fail started "first task did not start")
+            (submit executor (lambda () nil))
+            (loop until (= (executor-queue-depth executor) 1) do (sleep 0.001))
+            (let ((rejected (submit executor (lambda () nil))))
+              (handler-case (progn (await rejected :timeout 1) (error "AWAIT should have signaled"))
+                (executor-queue-full (condition)
+                  (expect (eq (executor-queue-full-executor condition) executor) :to-be-truthy)
+                  (expect (executor-queue-full-capacity condition) :to-be 1)))))
+        (signal-semaphore release)
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "TRY-SUBMIT returns ACCEPTED-P false instead of a rejected promise's condition"
+    (let ((executor (make-executor :size 1 :queue-capacity 1))
+          (release (make-semaphore))
+          (started (make-semaphore)))
+      (unwind-protect
+          (progn
+            ;; Confirm the sole worker has actually claimed this task before
+            ;; submitting the next one -- otherwise that submission can lose
+            ;; the race for the one capacity slot task1 still occupies while
+            ;; merely queued (not yet claimed), get silently rejected, and
+            ;; leave nothing to ever bring EXECUTOR-QUEUE-DEPTH back to 1 for
+            ;; the unbounded loop below to observe.
+            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
+            (wait-or-fail started "first task did not start")
+            (submit executor (lambda () nil))
+            (loop until (= (executor-queue-depth executor) 1) do (sleep 0.001))
+            (multiple-value-bind (promise accepted-p) (try-submit executor (lambda () nil))
+              (expect accepted-p :to-be nil)
+              (signals executor-queue-full (await promise :timeout 1))))
+        (signal-semaphore release)
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "TRY-SUBMIT returns ACCEPTED-P true when there is room"
+    (let ((executor (make-executor :size 1 :queue-capacity 4)))
+      (unwind-protect
+          (multiple-value-bind (promise accepted-p) (try-submit executor (lambda () :ok))
+            (expect accepted-p :to-be-truthy)
+            (expect (await promise :timeout 1) :to-be :ok))
+        (shutdown-executor executor :wait t :timeout 1)))))
+
+(describe "await-executor-termination"
+  (it "blocks until every worker has exited after shutdown"
+    (let ((executor (make-executor :size 2)))
+      (shutdown-executor executor)
+      (await-executor-termination executor :timeout 1)
+      (expect (executor-terminated-p executor) :to-be-truthy)))
+
+  (it "signals EXECUTOR-SHUT-DOWN rather than joining the current worker"
+    (let ((executor (make-executor :size 1))
+          (observed-p nil))
+      (unwind-protect
+          (let ((task (submit executor
+                               (lambda ()
+                                 (handler-case (await-executor-termination executor :timeout 1)
+                                   (executor-shut-down () (setf observed-p t)))))))
+            (shutdown-executor executor)
+            (await task :timeout 1)
+            (expect observed-p :to-be-truthy))
+        (shutdown-executor executor :wait t :timeout 1)))))
+
+(describe "with-executor"
+  (it "returns BODY's values and shuts the executor down once BODY returns"
+    (let ((executor-from-body nil))
+      (expect (with-executor (executor :size 2)
+                (setf executor-from-body executor)
+                :the-result)
+              :to-be :the-result)
+      (expect (executor-terminated-p executor-from-body) :to-be-truthy)))
+
+  (it "waits for already-queued work to finish rather than cancelling it"
+    (let ((ran-p nil))
+      (with-executor (executor :size 1)
+        (submit executor (lambda () (sleep 0.02) (setf ran-p t))))
+      (expect ran-p :to-be-truthy)))
+
+  (it "still shuts the executor down when BODY signals"
+    (let ((executor-from-body nil))
+      (signals simple-error
+        (with-executor (executor :size 1)
+          (setf executor-from-body executor)
+          (error "boom in body")))
+      (expect (executor-terminated-p executor-from-body) :to-be-truthy))))
+
+(describe "executor-map"
+  (it "returns results in input order once every call has fulfilled"
+    (with-executor (executor :size 3)
+      (expect (executor-map executor (lambda (x) (* x x)) (list 1 2 3 4 5))
+              :to-equal (list 1 4 9 16 25))))
+
+  (it "bounds concurrency to MAX-IN-FLIGHT"
+    (with-executor (executor :size 8)
+      (let ((in-flight 0)
+            (max-observed 0)
+            (lock (make-lock)))
+        (executor-map executor
+                       (lambda (x)
+                         (declare (ignore x))
+                         (with-lock-held (lock)
+                           (incf in-flight)
+                           (setf max-observed (max max-observed in-flight)))
+                         (sleep 0.02)
+                         (with-lock-held (lock) (decf in-flight)))
+                       (list 1 2 3 4 5 6)
+                       :max-in-flight 2)
+        (expect (<= max-observed 2) :to-be-truthy))))
+
+  (it "propagates the first in-order failure once every submitted call has settled"
+    (with-executor (executor :size 4)
+      (signals simple-error
+        (executor-map executor
+                       (lambda (x) (when (= x 2) (error "boom")) x)
+                       (list 1 2 3))))))
