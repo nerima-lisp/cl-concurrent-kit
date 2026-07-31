@@ -90,6 +90,32 @@ PROMISE-ALL-SETTLED, none of which spawn a thread or poll."
     (when state
       (funcall observer state outcome))))
 
+(defun %unobserve-promise (promise observer)
+  "Remove OBSERVER from PROMISE's pending observer list without invoking it,
+atomically with respect to settlement. A combinator racing several inputs
+(PROMISE-ALL, PROMISE-ANY, PROMISE-TIMEOUT) uses this so a losing input stops
+retaining its promise and closure once a winner is decided, rather than
+leaking until every other input happens to settle on its own.
+
+No-op once PROMISE has settled -- %SETTLE has already cleared its observer
+list by then, and OBSERVER has either already run or is about to."
+  (with-lock-held
+      ((promise-lock promise))
+    (when (eq (promise-state promise) :pending)
+      (let ((previous nil))
+        (loop for cell = (promise-observers promise) then (cdr cell)
+              while cell
+              do (if (eq (car cell) observer)
+                     (progn
+                       (if previous
+                           (setf (cdr previous) (cdr cell))
+                           (setf (promise-observers promise) (cdr cell)))
+                       (when (eq cell (promise-observer-tail promise))
+                         (setf (promise-observer-tail promise) previous))
+                       (return))
+                     (setf previous cell))))))
+  promise)
+
 (defun deliver (promise value)
   "Settle PROMISE successfully with VALUE. Signals PROMISE-ALREADY-FULFILLED
 if PROMISE was already settled."
@@ -100,6 +126,26 @@ if PROMISE was already settled."
 of returning a value. Signals PROMISE-ALREADY-FULFILLED if PROMISE was already
 settled."
   (%settle promise :failed condition))
+
+(defun cancel-promise (promise &optional reason)
+  "Settle a pending PROMISE as failed with PROMISE-CANCELLED, carrying the
+optional REASON. Cancellation only settles PROMISE -- it never preempts a
+FUTURE thread already running. Signals PROMISE-ALREADY-FULFILLED if PROMISE
+was already settled."
+  (%settle promise :failed (make-condition 'promise-cancelled :promise promise :reason reason)))
+
+(defun %deliver-if-pending (promise value)
+  "Like DELIVER, but a no-op instead of signaling PROMISE-ALREADY-FULFILLED if
+PROMISE was already settled by something else -- the common case in a
+combinator racing several inputs, where losing that race is expected rather
+than an error."
+  (handler-case (deliver promise value)
+    (promise-already-fulfilled () nil)))
+
+(defun %deliver-error-if-pending (promise condition)
+  "%DELIVER-IF-PENDING's counterpart for DELIVER-ERROR."
+  (handler-case (deliver-error promise condition)
+    (promise-already-fulfilled () nil)))
 
 (defun await (promise &key timeout)
   "Block until PROMISE is settled, then return the value DELIVER was called

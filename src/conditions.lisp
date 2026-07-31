@@ -101,3 +101,26 @@ count below zero.")
    (barrier-broken-barrier condition))
   "Signaled by AWAIT-BARRIER when another participant timed out or was
 cancelled, or RESET-BARRIER abandoned the current generation.")
+
+(%define-kit-condition promise-cancelled
+    ((promise "The promise CANCEL-PROMISE was called on.")
+     (reason "The optional reason supplied to CANCEL-PROMISE, or NIL."))
+  ("Promise ~S was cancelled~@[ (~A)~]."
+   (promise-cancelled-promise condition)
+   (promise-cancelled-reason condition))
+  "Signaled by AWAIT after CANCEL-PROMISE settles a pending promise.
+Cancellation settles only the promise and never preempts a FUTURE thread
+already running.")
+
+(%define-kit-condition promise-empty-input
+    ((operation "A keyword naming the combinator that received no promises,
+e.g. :PROMISE-ANY."))
+  ("~S requires at least one promise." (promise-empty-input-operation condition))
+  "Signaled when PROMISE-ANY receives no promises.")
+
+(%define-kit-condition promise-all-failed
+    ((causes "A list of the conditions every input promise to PROMISE-ANY
+failed with, in input order."))
+  ("Every promise failed; first failure: ~A"
+   (first (promise-all-failed-causes condition)))
+  "Signaled by PROMISE-ANY when every input promise fails.")

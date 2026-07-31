@@ -13,8 +13,10 @@
    #:make-semaphore #:wait-on-semaphore #:signal-semaphore
    #:make-atomic-counter #:atomic-counter-value #:atomic-counter-incf #:atomic-counter-decf
    ;; Promises / futures
-   #:make-promise #:promise-p #:promise-settled-p #:deliver #:deliver-error #:await #:future
-   #:promise-then #:promise-race #:promise-all-settled
+   #:make-promise #:promise-p #:promise-settled-p #:deliver #:deliver-error #:cancel-promise
+   #:await #:future
+   #:promise-then #:promise-catch #:promise-finally #:promise-race #:promise-all-settled
+   #:promise-all #:promise-any #:promise-timeout
    #:promise-settlement-p #:promise-settlement-state #:promise-settlement-value
    #:promise-settlement-condition
    ;; Channels
@@ -39,7 +41,9 @@
    #:task-cancelled #:task-cancelled-scope
    #:scope-error #:scope-error-causes
    #:latch-count-underflow
-   #:barrier-broken)
+   #:barrier-broken
+   #:promise-cancelled #:promise-cancelled-promise #:promise-cancelled-reason
+   #:promise-empty-input #:promise-all-failed #:promise-all-failed-causes)
   (:export #:run-tests))
 
 (in-package #:cl-concurrent-kit/test)

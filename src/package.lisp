@@ -49,9 +49,15 @@
    #:promise-settlement-condition
    #:deliver
    #:deliver-error
+   #:cancel-promise
    #:await
    #:promise-then
+   #:promise-catch
+   #:promise-finally
    #:promise-race
+   #:promise-all
+   #:promise-any
+   #:promise-timeout
    #:future
 
    ;; Channels (CSP)
@@ -114,7 +120,14 @@
    #:latch-count-underflow-count
    #:latch-count-underflow-decrement
    #:barrier-broken
-   #:barrier-broken-barrier))
+   #:barrier-broken-barrier
+   #:promise-cancelled
+   #:promise-cancelled-promise
+   #:promise-cancelled-reason
+   #:promise-empty-input
+   #:promise-empty-input-operation
+   #:promise-all-failed
+   #:promise-all-failed-causes))
 
 ;; SPEED 1 (SBCL's default) is what triggers this, confirmed by bisection: at
 ;; SPEED 0 the whole system compiles in milliseconds; at SPEED 1 or above,
