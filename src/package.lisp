@@ -77,7 +77,16 @@
    #:make-executor
    #:executor-p
    #:submit
+   #:try-submit
    #:shutdown-executor
+   #:await-executor-termination
+   #:with-executor
+   #:executor-map
+   #:executor-shutdown-p
+   #:executor-terminated-p
+   #:executor-queue-capacity
+   #:executor-queue-depth
+   #:executor-high-water-mark
 
    ;; Structured concurrency
    #:with-task-scope
@@ -127,7 +136,10 @@
    #:promise-empty-input
    #:promise-empty-input-operation
    #:promise-all-failed
-   #:promise-all-failed-causes))
+   #:promise-all-failed-causes
+   #:executor-queue-full
+   #:executor-queue-full-executor
+   #:executor-queue-full-capacity))
 
 ;; SPEED 1 (SBCL's default) is what triggers this, confirmed by bisection: at
 ;; SPEED 0 the whole system compiles in milliseconds; at SPEED 1 or above,

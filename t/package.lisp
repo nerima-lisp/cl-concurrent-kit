@@ -25,7 +25,10 @@
    ;; Select
    #:select
    ;; Executors
-   #:make-executor #:executor-p #:submit #:shutdown-executor
+   #:make-executor #:executor-p #:submit #:try-submit #:shutdown-executor
+   #:await-executor-termination #:with-executor #:executor-map
+   #:executor-shutdown-p #:executor-terminated-p
+   #:executor-queue-capacity #:executor-queue-depth #:executor-high-water-mark
    ;; Structured concurrency
    #:with-task-scope #:spawn #:check-cancelled
    ;; Countdown latches
@@ -43,7 +46,8 @@
    #:latch-count-underflow
    #:barrier-broken
    #:promise-cancelled #:promise-cancelled-promise #:promise-cancelled-reason
-   #:promise-empty-input #:promise-all-failed #:promise-all-failed-causes)
+   #:promise-empty-input #:promise-all-failed #:promise-all-failed-causes
+   #:executor-queue-full #:executor-queue-full-executor #:executor-queue-full-capacity)
   (:export #:run-tests))
 
 (in-package #:cl-concurrent-kit/test)

@@ -66,6 +66,16 @@ instead of signaling this; only sending after close is an error.")
   "Delivered through a submitted promise when its executor no longer accepts
 work.")
 
+(%define-kit-condition executor-queue-full
+    ((executor "The executor whose bounded queue rejected the task.")
+     (capacity "The QUEUE-CAPACITY MAKE-EXECUTOR gave EXECUTOR."))
+  ("Executor ~S has reached its pending task capacity of ~D."
+   (executor-queue-full-executor condition)
+   (executor-queue-full-capacity condition))
+  "Delivered through a submitted promise by SUBMIT/TRY-SUBMIT when a bounded
+executor's queue is already full. Never signaled for an unbounded executor
+(MAKE-EXECUTOR's default).")
+
 (%define-kit-condition task-cancelled
     ((scope "The scope whose cancellation CHECK-CANCELLED observed."))
   ("Task cancelled: its enclosing scope ~S was cancelled."
