@@ -1,18 +1,24 @@
 (progn
   #.(progn (require :asdf) (require :sb-cover) nil)
 
-  ;; If CI reports a failing `checks.coverage-lcov` that a local rebuild
-  ;; (e.g. `nix build .#checks.x86_64-linux.coverage-lcov`) can't reproduce,
-  ;; suspect the binary cache rather than this script: this is a plain
-  ;; input-addressed derivation, so once any one build -- flaky or not --
-  ;; populates Cachix for a given commit, every subsequent `nix flake check`
-  ;; substitutes that same cached output without re-running it. A build that
-  ;; happened to lose a scheduling race on a busy runner (coverage
-  ;; instrumentation over a threaded test suite is timing-sensitive) gets
-  ;; cached as gospel. Force a fresh build by changing this file, or purge
-  ;; the offending store path from the cache directly.
-
-
+  ;; `checks.coverage-lcov` (this script) has been observed to intermittently
+  ;; report far less than 100% expression coverage -- e.g. 57/921 -- on a
+  ;; commit that is otherwise unchanged, while `checks.coverage` (SB-COVER's
+  ;; plain in-memory :REPORT, built from the exact same instrumented test
+  ;; run) passes at 100% every time. Reproduced locally across multiple
+  ;; fresh, uncached x86_64-linux builds: some runs land on 100%, some land
+  ;; on exactly 57/921, with no code change between them. A DIAG build
+  ;; confirmed CL-CONCURRENT-KIT's sources are compiled exactly once (the
+  ;; live coverage-hashtable file count is identical before and after
+  ;; TEST-SYSTEM) -- so this is not a double-compile silently discarding
+  ;; instrumentation. Since only the ENABLE-COVERAGE-LOGGING-dependent path
+  ;; (this file) is affected and not plain :REPORT, suspect that logging
+  ;; mechanism itself isn't safe under the concurrent, many-real-OS-threads
+  ;; execution this test suite exercises by design (that's what it's
+  ;; testing) -- i.e. an upstream SB-COVER limitation, not a bug in this
+  ;; project's code. If this check fails, retry it before assuming a
+  ;; regression; a hard 100% gate on it should be considered unreliable
+  ;; until upstream addresses thread-safety in coverage logging.
 
   (defun script-directory ()
     (make-pathname :name nil
