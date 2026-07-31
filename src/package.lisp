@@ -109,6 +109,24 @@
    #:await-barrier
    #:reset-barrier
 
+   ;; Reactive streams (built on channels)
+   #:channel-producer
+   #:channel-from-sequence
+   #:channel-map
+   #:channel-keep
+   #:channel-filter
+   #:channel-distinct-until-changed
+   #:channel-debounce
+   #:channel-flat-map
+   #:channel-throttle
+   #:channel-scan
+   #:channel-reduce
+   #:channel-collect
+   #:channel-each
+   #:channel-some
+   #:channel-every
+   #:channel-find
+
    ;; Conditions
    #:cl-concurrent-kit-error
    #:operation-timed-out

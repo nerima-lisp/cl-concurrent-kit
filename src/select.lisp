@@ -141,5 +141,13 @@ clause's body returns.
 Expanded entirely at compile time by %EXPAND-SELECT above: every clause's
 TRY-SEND/TRY-RECV probe is inlined directly into the loop body below, so a
 clause running is a direct call, not one more indirection through a stored
-handler thunk looked up by GETF at runtime."
+handler thunk looked up by GETF at runtime.
+
+That inlining has one consequence worth knowing: a clause body sits inside
+this macro's own probing LOOP, which -- like any LOOP -- establishes its own
+implicit block named NIL. A bare (RETURN) inside a clause body exits *that*
+loop, not one an enclosing form of the caller's own happens to have; it does
+not escape to a caller-written (LOOP ...) wrapped around the whole SELECT
+call the way it might look like it should. Use an explicit named BLOCK and
+RETURN-FROM around the enclosing loop instead."
   (%expand-select clauses))

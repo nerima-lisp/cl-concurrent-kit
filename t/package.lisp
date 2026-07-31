@@ -36,6 +36,12 @@
    ;; Cyclic barriers
    #:make-barrier #:barrier-parties #:barrier-number-waiting #:barrier-broken-p
    #:await-barrier #:reset-barrier
+   ;; Reactive streams
+   #:channel-producer #:channel-from-sequence
+   #:channel-map #:channel-keep #:channel-filter #:channel-distinct-until-changed
+   #:channel-debounce #:channel-flat-map #:channel-throttle #:channel-scan
+   #:channel-reduce #:channel-collect #:channel-each #:channel-some #:channel-every
+   #:channel-find
    ;; Conditions
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
