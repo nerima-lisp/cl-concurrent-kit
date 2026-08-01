@@ -50,8 +50,8 @@ than follow the default branch.
 ## Documentation
 
 - [Getting started](https://nerima-lisp.github.io/cl-concurrent-kit/getting-started/)
-- [API reference](https://nerima-lisp.github.io/cl-concurrent-kit/api-reference/)
-- [Architecture](https://nerima-lisp.github.io/cl-concurrent-kit/architecture/)
+- [API reference](https://nerima-lisp.github.io/cl-concurrent-kit/reference/api/)
+- [Architecture](https://nerima-lisp.github.io/cl-concurrent-kit/reference/architecture/)
 
 ## Development
 

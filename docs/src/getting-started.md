@@ -43,5 +43,5 @@ Or, from a plain ASDF setup, clone the repository somewhere on your
 ;; => 15, and both tasks are guaranteed to have finished before this returns.
 ```
 
-Next: [Core concepts](concepts.md) for the ideas behind each layer, or
-[Recipes](recipes.md) for more worked examples.
+Next: [Core concepts](guide/core-concepts.md) for the ideas behind each layer, or
+[Recipes](guide/recipes.md) for more worked examples.

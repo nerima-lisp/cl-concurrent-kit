@@ -44,7 +44,7 @@ layer of their own:
   `SPAWN` or an executor rather than a hand-written read/transform/write
   loop.
 
-See [Core concepts](concepts.md) for how they fit together, [Recipes](recipes.md)
-for worked examples, and [Architecture](architecture.md) for the
+See [Core concepts](guide/core-concepts.md) for how they fit together, [Recipes](guide/recipes.md)
+for worked examples, and [Architecture](reference/architecture.md) for the
 implementation decisions behind `SELECT` and the unbuffered channel
 rendezvous.

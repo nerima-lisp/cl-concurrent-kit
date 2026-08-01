@@ -55,7 +55,7 @@ blocking `SEND` provides, in exchange for never waiting.
 ## Select doesn't poll
 
 `SELECT` waits on several channel operations and runs whichever becomes
-ready first. It is not a busy-poll loop: see [Architecture](architecture.md)
+ready first. It is not a busy-poll loop: see [Architecture](../reference/architecture.md)
 for how it sleeps between attempts.
 
 Each `recv` channel form and each `send` channel/value form is evaluated

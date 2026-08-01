@@ -44,11 +44,11 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Guide:
-      - Core concepts: concepts.md
-      - Recipes: recipes.md
+      - Core concepts: guide/core-concepts.md
+      - Recipes: guide/recipes.md
   - Reference:
-      - API: api-reference.md
-      - Architecture: architecture.md
-      - Compatibility: compatibility.md
+      - API: reference/api.md
+      - Architecture: reference/architecture.md
+      - Compatibility: reference/compatibility.md
   - Project:
-      - Roadmap: roadmap.md
+      - Roadmap: project/roadmap.md

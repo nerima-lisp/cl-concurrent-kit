@@ -12,5 +12,5 @@ Not yet built, and not promised for a specific release:
   queue (`EXECUTOR-QUEUE-DEPTH`/`EXECUTOR-HIGH-WATER-MARK`); a plain
   `CHANNEL` still has no such introspection.
 - Porting `src/primitives.lisp` to another implementation is out of scope for
-  this project (see [Compatibility](compatibility.md)) but would be the only
+  this project (see [Compatibility](../reference/compatibility.md)) but would be the only
   file that needs it.

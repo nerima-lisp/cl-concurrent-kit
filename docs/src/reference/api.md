@@ -44,7 +44,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `DELIVER` `(promise value)` | Settle successfully. |
 | `DELIVER-ERROR` `(promise condition)` | Settle as failed. |
 | `AWAIT` `(promise &key timeout)` | Block for the settled value, or re-signal its condition. |
-| `PROMISE-THEN` `(promise on-fulfilled &optional on-rejected)` | Continuation-passing composition: register `on-fulfilled`/`on-rejected` and return a new `PROMISE` for whichever one runs, without blocking. See [Core concepts](concepts.md). |
+| `PROMISE-THEN` `(promise on-fulfilled &optional on-rejected)` | Continuation-passing composition: register `on-fulfilled`/`on-rejected` and return a new `PROMISE` for whichever one runs, without blocking. See [Core concepts](../guide/core-concepts.md). |
 | `PROMISE-RACE` `(promises)` | A `PROMISE` that settles the same way as whichever of `promises` (non-empty) settles first, via the same continuation-passing composition as `PROMISE-THEN`. |
 | `FUTURE` `(&body body)` | Macro: spawn `body` on a thread, return its `PROMISE` immediately. |
 | `PROMISE-ALL-SETTLED` `(promises)` | A `PROMISE` fulfilled, once every input has settled, with an ordered list of `PROMISE-SETTLEMENT` records; failures are represented rather than re-signaled. Never fails, even if some inputs do. Empty input yields `NIL`. |
@@ -71,7 +71,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
-| `SELECT` `(&body clauses)` | Macro: wait on several channel operations. Requires at least one `RECV` or `SEND` clause; channel and send-value forms are evaluated once, in clause order. `:DEFAULT` and `:TIMEOUT` are mutually exclusive. A bare `(RETURN)` in a clause body exits `SELECT`'s own internal loop, not a caller's enclosing one -- use a named `BLOCK`/`RETURN-FROM` instead. See [Core concepts](concepts.md). |
+| `SELECT` `(&body clauses)` | Macro: wait on several channel operations. Requires at least one `RECV` or `SEND` clause; channel and send-value forms are evaluated once, in clause order. `:DEFAULT` and `:TIMEOUT` are mutually exclusive. A bare `(RETURN)` in a clause body exits `SELECT`'s own internal loop, not a caller's enclosing one -- use a named `BLOCK`/`RETURN-FROM` instead. See [Core concepts](../guide/core-concepts.md). |
 
 ## Executors
 
@@ -126,7 +126,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 Stages built on channels; every one takes an optional `:SCOPE`, passed
 explicitly like `SPAWN`'s own `SCOPE` (a tracked child, cooperatively
 cancellable between values -- see [Architecture](architecture.md)), and an
-optional `:EXECUTOR`. See [Core concepts](concepts.md) for the shared stage
+optional `:EXECUTOR`. See [Core concepts](../guide/core-concepts.md) for the shared stage
 contract (output ownership, closing, and completion promises).
 
 | Symbol | Description |
