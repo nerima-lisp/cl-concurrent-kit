@@ -66,7 +66,7 @@ if single, call site (`src/executor.lisp`'s worker-loop `(FORMAT
 A codebase carries backward-compatibility weight when a later API replaces
 an earlier one and both must keep working -- a deprecated alias, a
 compatibility shim, a `#+old-sbcl` branch preserved past its last caller.
-Every release so far (v0.1.0 through v0.4.0) has changed public symbols'
+Every release so far (v0.1.0 through v0.4.1) has changed public symbols'
 shapes outright rather than deprecating them -- `%CHANNEL-DEQUEUE` and the
 ring-buffer `CHANNEL`/`%WORK-QUEUE` internals replaced the FIFO-backed ones
 wholesale in v0.3.0, for instance, with no transitional alias kept alongside
@@ -76,7 +76,7 @@ or `shim`, in any casing -- re-verified as part of the v0.4.0 refactor, not
 just inherited from an earlier audit. The absence is the intended state, not
 a gap -- keep it that way by deleting rather than deprecating when a public
 symbol's shape changes, exactly as `cl-concurrent-kit.asd`'s `:version
-"0.4.0"` (no `1.x` compatibility promise yet) allows.
+"0.4.1"` (no `1.x` compatibility promise yet) allows.
 
 ## The CONDITION-WAIT timeout contract
 
