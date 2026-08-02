@@ -95,6 +95,40 @@ probes directly instead of allocating a runtime operation vector and
 dispatching its selected index. This changes only the ready-path overhead; the
 registration, retry, and cleanup protocol remains the same.
 
+`%EXPAND-SELECT` runs every clause's non-blocking probe once *before*
+`MAKE-SEMAPHORE` or `%CHANNEL-ADD-WAITER` ever runs. A `SELECT` whose first
+clause is already ready -- overwhelmingly the common case for a channel with a
+buffered value already waiting -- never allocates a waiter semaphore or enters
+the `UNWIND-PROTECT` at all; only a call that finds nothing ready pays for
+registration, and the same probes run again inside the wait loop once
+registered.
+
+## CHANNEL's queue is a ring buffer, not a linked list
+
+`CHANNEL` and the executor's internal work queue each hold their values in a
+preallocated `SIMPLE-ARRAY` addressed by `HEAD`/`TAIL` indices that wrap
+modulo the array's length, rather than in a cons-based or intrusive
+linked-list queue. Enqueuing and dequeuing are array writes, not allocations;
+the executor's queue additionally doubles its buffer's length (copying live
+entries into a fresh array) the one time it fills, rather than growing one
+cell at a time. An unbuffered `CHANNEL`'s rendezvous -- `SEND` waiting for its
+own value to actually be taken back out -- is a `RENDEZVOUS-GENERATION`
+counter `RECV` increments on every dequeue, instead of a per-message struct
+`SEND` allocates just to flip its own `RECEIVED-P` flag back to `SEND`.
+
+## Waiter dispatch is bucketed by interest, not scanned
+
+A channel can accumulate many `SELECT` calls waiting on it at once, each
+interested in a different subset of {send, recv, rendezvous} events
+(`%CHANNEL-ADD-WAITER`'s `INTERESTS` bitmask, above). Rather than one
+`MAPHASH` over every registered waiter on each notification -- work
+proportional to total waiters regardless of how many actually care --
+`%CHANNEL-NOTIFY-WAITERS` keeps one hash-table per distinct interest
+combination (an 8-slot array, since three event bits combine into eight
+subsets) plus a per-bit reference count and an aggregate interest mask, so a
+notification that nothing is interested in returns immediately, and one that
+something is interested in only walks the bucket(s) that actual interest.
+
 ## Structured concurrency: why the body's own error is never wrapped
 
 `WITH-TASK-SCOPE` distinguishes two failure sources deliberately:
@@ -300,9 +334,8 @@ duplicated between them.
 `DELIVER`/`DELIVER-ERROR`, `AWAIT`, and the thread-spawning `FUTURE`);
 `src/promise-combinators.lisp` is everything that derives a new promise from
 existing ones (`PROMISE-ALL-SETTLED`, `PROMISE-RACE`, `PROMISE-THEN`) --
-the same split `src/scope-state.lisp`/`src/scope.lisp` and
-`src/fifo.lisp`/`src/channel.lisp` already make between a layer's own state
-and what is built on top of it.
+the same split `src/scope-state.lisp`/`src/scope.lisp` already makes between
+a layer's own state and what is built on top of it.
 
 `PROMISE-THEN` is built directly on the same
 continuation-registration primitive `PROMISE-ALL-SETTLED` already used

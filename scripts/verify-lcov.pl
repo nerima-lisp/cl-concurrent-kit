@@ -36,8 +36,6 @@ my %non_executable_da = map { $_ => 1 } qw(
   conditions.lisp:36
   primitives.lisp:9 primitives.lisp:30 primitives.lisp:81 primitives.lisp:103 primitives.lisp:161
   timeout.lisp:18
-  fifo.lisp:12 fifo.lisp:15 fifo.lisp:16 fifo.lisp:17 fifo.lisp:18
-  fifo.lisp:21 fifo.lisp:22
   latch.lisp:11 latch.lisp:16 latch.lisp:17 latch.lisp:18 latch.lisp:19
   latch.lisp:71 latch.lisp:72 latch.lisp:73 latch.lisp:74 latch.lisp:75
   latch.lisp:76 latch.lisp:77 latch.lisp:80
@@ -45,19 +43,16 @@ my %non_executable_da = map { $_ => 1 } qw(
   promise.lisp:15 promise.lisp:16 promise.lisp:21 promise.lisp:22
   promise-combinators.lisp:12 promise-combinators.lisp:19 promise-combinators.lisp:20
   promise-combinators.lisp:21
-  channel.lisp:9 channel.lisp:12 channel.lisp:13 channel.lisp:14 channel.lisp:15
-  channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19 channel.lisp:20
-  channel.lisp:21 channel.lisp:22 channel.lisp:25 channel.lisp:26 channel.lisp:27
-  channel.lisp:28 channel.lisp:34 channel.lisp:35 channel.lisp:41 channel.lisp:42
-  channel.lisp:44 channel.lisp:45 channel.lisp:46 channel.lisp:48 channel.lisp:49
-  channel.lisp:50 channel.lisp:51 channel.lisp:53 channel.lisp:60 channel.lisp:61
-  channel.lisp:62 channel.lisp:63 channel.lisp:65 channel.lisp:66 channel.lisp:67
-  channel.lisp:68 channel.lisp:69 channel.lisp:70 channel.lisp:71 channel.lisp:72
-  channel.lisp:73 channel.lisp:74 channel.lisp:75 channel.lisp:76 channel.lisp:77
-  channel.lisp:78 channel.lisp:79 channel.lisp:80 channel.lisp:81 channel.lisp:82
-  channel.lisp:83 channel.lisp:84 channel.lisp:85 channel.lisp:86 channel.lisp:87
-  channel.lisp:88 channel.lisp:89 channel.lisp:90 channel.lisp:91 channel.lisp:92
-  channel.lisp:93 channel.lisp:94 channel.lisp:95 channel.lisp:96 channel.lisp:97
+  channel.lisp:9 channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13
+  channel.lisp:14 channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19
+  channel.lisp:20 channel.lisp:21 channel.lisp:22 channel.lisp:23 channel.lisp:24
+  channel.lisp:25 channel.lisp:26 channel.lisp:27 channel.lisp:28 channel.lisp:29
+  channel.lisp:30 channel.lisp:31 channel.lisp:32 channel.lisp:33 channel.lisp:34
+  channel.lisp:35 channel.lisp:36 channel.lisp:37 channel.lisp:38 channel.lisp:39
+  channel.lisp:40 channel.lisp:41 channel.lisp:42 channel.lisp:44 channel.lisp:53
+  channel.lisp:62 channel.lisp:72 channel.lisp:77 channel.lisp:91 channel.lisp:102
+  channel.lisp:121 channel.lisp:145 channel.lisp:176 channel.lisp:192 channel.lisp:224
+  channel.lisp:242 channel.lisp:258 channel.lisp:272 channel.lisp:284
   select.lisp:9 select.lisp:12 select.lisp:13 select.lisp:15 select.lisp:16
   select.lisp:17 select.lisp:18 select.lisp:19 select.lisp:20 select.lisp:21
   select.lisp:22 select.lisp:23 select.lisp:24 select.lisp:25 select.lisp:26
@@ -85,11 +80,16 @@ my %non_executable_da = map { $_ => 1 } qw(
   select.lisp:135 select.lisp:136 select.lisp:137 select.lisp:138 select.lisp:139
   select.lisp:140 select.lisp:141 select.lisp:142 select.lisp:143 select.lisp:144
   select.lisp:145 select.lisp:146
-  executor.lisp:6 executor.lisp:14 executor.lisp:15 executor.lisp:16 executor.lisp:17
-  executor.lisp:20 executor.lisp:21 executor.lisp:22 executor.lisp:23 executor.lisp:25
-  executor.lisp:26 executor.lisp:27 executor.lisp:65 executor.lisp:66 executor.lisp:67
-  executor.lisp:68 executor.lisp:197 executor.lisp:220 executor.lisp:221 executor.lisp:222
-  executor.lisp:223
+  executor.lisp:6 executor.lisp:13 executor.lisp:14 executor.lisp:15 executor.lisp:16
+  executor.lisp:17 executor.lisp:18 executor.lisp:19 executor.lisp:21 executor.lisp:22
+  executor.lisp:23 executor.lisp:24 executor.lisp:25 executor.lisp:27 executor.lisp:32
+  executor.lisp:48 executor.lisp:69 executor.lisp:87 executor.lisp:88 executor.lisp:89
+  executor.lisp:90 executor.lisp:92 executor.lisp:104 executor.lisp:109 executor.lisp:113
+  executor.lisp:118 executor.lisp:123 executor.lisp:128 executor.lisp:140 executor.lisp:148
+  executor.lisp:173 executor.lisp:185 executor.lisp:186 executor.lisp:187 executor.lisp:198
+  executor.lisp:225 executor.lisp:248 executor.lisp:249 executor.lisp:250 executor.lisp:251
+  executor.lisp:252 executor.lisp:254 executor.lisp:263 executor.lisp:274 executor.lisp:281
+  executor.lisp:295
   scope-state.lisp:10 scope-state.lisp:13 scope-state.lisp:16 scope-state.lisp:17 scope-state.lisp:20
   scope-state.lisp:28 scope-state.lisp:34 scope-state.lisp:35 scope-state.lisp:37
   scope-state.lisp:40 scope-state.lisp:42 scope-state.lisp:43 scope-state.lisp:44

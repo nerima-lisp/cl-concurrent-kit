@@ -189,7 +189,37 @@ linearized with concurrent SEND/RECV.")
                   (logandc2 (channel-waiter-interests channel) (ash 1 bit)))))))
         (decf (channel-waiter-count channel))))))
 
-(defun send (channel value &key timeout) "Send VALUE on CHANNEL, blocking while it is full (buffered) or until a RECV takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED if CHANNEL is already closed." (declare (type channel channel)) (%with-channel-lock (channel) (let* ((deadline (%deadline-from-timeout timeout)) (unbuffered-p (zerop (channel-buffer-size channel))) (generation nil) (capacity (channel-capacity channel))) (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel) deadline timeout :send) (cond ((channel-closed-p channel) :closed) ((< (channel-count channel) capacity) :ready)) (when (eq room :closed) (error (quote channel-closed) :channel channel))) (when unbuffered-p (setf generation (channel-rendezvous-generation channel))) (%channel-buffer-push channel value) (%channel-notify channel +channel-notify-recv+) (when (and unbuffered-p (eq :timeout (%wait-until ((channel-rendezvous-condition-variable channel) (channel-lock channel) deadline) (/= generation (channel-rendezvous-generation channel)))) (= generation (channel-rendezvous-generation channel))) (when (%channel-remove-unbuffered-message channel) (%channel-notify channel +channel-notify-send+)) (error (quote operation-timed-out) :operation :send :timeout timeout))) t))
+(defun send (channel value &key timeout)
+  "Send VALUE on CHANNEL, blocking while it is full (buffered) or until a RECV
+takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals
+OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED if
+CHANNEL is already closed."
+  (declare (type channel channel))
+  (%with-channel-lock (channel)
+    (let* ((deadline (%deadline-from-timeout timeout))
+           (unbuffered-p (zerop (channel-buffer-size channel)))
+           (generation nil)
+           (capacity (channel-capacity channel)))
+      (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel)
+                            deadline timeout :send)
+          (cond
+            ((channel-closed-p channel) :closed)
+            ((< (channel-count channel) capacity) :ready))
+        (when (eq room :closed)
+          (error 'channel-closed :channel channel)))
+      (when unbuffered-p
+        (setf generation (channel-rendezvous-generation channel)))
+      (%channel-buffer-push channel value)
+      (%channel-notify channel +channel-notify-recv+)
+      (when (and unbuffered-p
+                 (eq :timeout
+                     (%wait-until ((channel-rendezvous-condition-variable channel) (channel-lock channel) deadline)
+                       (/= generation (channel-rendezvous-generation channel))))
+                 (= generation (channel-rendezvous-generation channel)))
+        (when (%channel-remove-unbuffered-message channel)
+          (%channel-notify channel +channel-notify-send+))
+        (error 'operation-timed-out :operation :send :timeout timeout))))
+  t)
 
 (defun %channel-dequeue (channel)
   "Pop CHANNEL's next queued entry, update COUNT and an unbuffered entry's
@@ -225,7 +255,19 @@ closed and every value sent before the close has been drained. With TIMEOUT
         (:closed (values nil nil))
         (:ready (values (%channel-dequeue channel) t))))))
 
-(defun try-send (channel value) "Non-blocking SEND: deposit VALUE and return T if room is immediately available, else return NIL. Unlike SEND, does not wait for an unbuffered channel value to actually be received. Signals CHANNEL-CLOSED if CHANNEL is already closed." (declare (type channel channel)) (%with-channel-lock (channel) (when (channel-closed-p channel) (error (quote channel-closed) :channel channel)) (when (< (channel-count channel) (channel-capacity channel)) (%channel-buffer-push channel value) (%channel-notify channel +channel-notify-recv+) t)))
+(defun try-send (channel value)
+  "Non-blocking SEND: deposit VALUE and return T if room is immediately
+available, else return NIL. Unlike SEND, does not wait for an unbuffered
+channel value to actually be received. Signals CHANNEL-CLOSED if CHANNEL is
+already closed."
+  (declare (type channel channel))
+  (%with-channel-lock (channel)
+    (when (channel-closed-p channel)
+      (error 'channel-closed :channel channel))
+    (when (< (channel-count channel) (channel-capacity channel))
+      (%channel-buffer-push channel value)
+      (%channel-notify channel +channel-notify-recv+)
+      t)))
 
 (defun try-recv (channel)
   "Non-blocking RECV. Returns (VALUES VALUE T NIL) if a value was

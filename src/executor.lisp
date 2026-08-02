@@ -12,8 +12,9 @@
 ;;; here. Uses a growable ring buffer to avoid per-submission allocation.
 (defstruct (%work-queue (:constructor %make-work-queue (capacity buffer)))
   "Internal task queue used by EXECUTOR."
-  (lock (make-lock "cl-concurrent-kit executor queue") :read-only t)
-  (condition-variable (make-condition-variable) :read-only t)
+  (lock (make-lock :name "cl-concurrent-kit executor queue") :read-only t)
+  (condition-variable (make-condition-variable :name "cl-concurrent-kit executor queue")
+                       :read-only t)
   (buffer nil :type (simple-array t (*)))
   (head 0 :type fixnum)
   (tail 0 :type fixnum)
@@ -88,7 +89,7 @@
             (queue nil :read-only t)
             (threads nil :read-only t)))))
 
-(defun %worker-loop (queue)
+(defun %executor-worker-loop (queue)
   "Run queued tasks without allowing settlement callbacks to kill this worker."
   (loop
     (multiple-value-bind (task more-p) (%work-queue-pop queue)
@@ -291,5 +292,31 @@ SUBMIT fail fast with EXECUTOR-QUEUE-FULL when the queue is full."
                                    :capacity (executor-queue-capacity executor))))))
       (values promise task accepted-p))))
 
-(defun %work-queue-close (executor cancel-pending) "Close EXECUTOR queue and cancel pending tasks outside its lock." (let ((queue (executor-queue executor)) (cancelled-buffer nil) (cancelled-head 0) (cancelled-count 0)) (%with-work-queue-lock (queue) (when (and cancel-pending (plusp (%work-queue-count queue))) (setf cancelled-buffer (%work-queue-buffer queue) cancelled-head (%work-queue-head queue) cancelled-count (%work-queue-count queue) (%work-queue-count queue) 0 (%work-queue-head queue) 0 (%work-queue-tail queue) 0)) (setf (%work-queue-closed-p queue) t) (condition-broadcast (%work-queue-condition-variable queue))) (when cancelled-buffer (let ((condition (make-condition (quote executor-shut-down) :executor executor)) (buffer-length (length cancelled-buffer)) (index cancelled-head)) (dotimes (offset cancelled-count) (declare (ignore offset)) (let ((task (aref cancelled-buffer index))) (setf (aref cancelled-buffer index) nil index (if (= index (1- buffer-length)) 0 (1+ index))) (%executor-task-cancel task condition)))))))
+(defun %work-queue-close (executor cancel-pending)
+  "Close EXECUTOR queue and cancel pending tasks outside its lock."
+  (let ((queue (executor-queue executor))
+        (cancelled-buffer nil)
+        (cancelled-head 0)
+        (cancelled-count 0))
+    (%with-work-queue-lock (queue)
+      (when (and cancel-pending (plusp (%work-queue-count queue)))
+        (setf cancelled-buffer (%work-queue-buffer queue)
+              cancelled-head (%work-queue-head queue)
+              cancelled-count (%work-queue-count queue)
+              (%work-queue-count queue) 0
+              (%work-queue-head queue) 0
+              (%work-queue-tail queue) 0))
+      (setf (%work-queue-closed-p queue) t)
+      (condition-broadcast (%work-queue-condition-variable queue)))
+    (when cancelled-buffer
+      (let ((condition (make-condition 'executor-shut-down :executor executor))
+            (buffer-length (length cancelled-buffer))
+            (index cancelled-head))
+        (dotimes (offset cancelled-count)
+          (declare (ignore offset))
+          (let ((task (aref cancelled-buffer index)))
+            (setf (aref cancelled-buffer index) nil
+                  index (if (= index (1- buffer-length)) 0 (1+ index)))
+            (%executor-task-cancel task condition)))))))
+
 (declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

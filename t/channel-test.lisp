@@ -149,25 +149,7 @@
         (expect ok-p :to-be nil)
         (expect closed-p :to-be-truthy)))))
 
-  (describe "FIFO internals"
-    (it "removes the head cell without disturbing queue order"
-      (let ((fifo (cl-concurrent-kit::make-fifo)))
-        (let ((first (cl-concurrent-kit::fifo-push fifo :first))
-              (second (cl-concurrent-kit::fifo-push fifo :second)))
-          (declare (ignore second))
-          (cl-concurrent-kit::fifo-remove fifo first)
-          (expect (cl-concurrent-kit::fifo-pop fifo) :to-be :second)
-          (expect (cl-concurrent-kit::fifo-empty-p fifo) :to-be-truthy))))
-    (it "removes the tail cell without disturbing queue order"
-      (let ((fifo (cl-concurrent-kit::make-fifo)))
-        (let ((first (cl-concurrent-kit::fifo-push fifo :first))
-              (second (cl-concurrent-kit::fifo-push fifo :second)))
-          (declare (ignore first))
-          (cl-concurrent-kit::fifo-remove fifo second)
-          (expect (cl-concurrent-kit::fifo-pop fifo) :to-be :first)
-          (expect (cl-concurrent-kit::fifo-empty-p fifo) :to-be-truthy)))))
-
-(describe "channel SELECT waiter registration"
+  (describe "channel SELECT waiter registration"
   (it "deduplicates repeated registration of the same SELECT waiter"
     (let ((channel (make-channel))
           (waiter (make-semaphore)))

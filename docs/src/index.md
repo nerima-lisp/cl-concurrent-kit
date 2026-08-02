@@ -20,12 +20,12 @@ cl-concurrent-kit is five layers, each built only on the ones below it:
    (`PROMISE`), a JS/Rust-style `FUTURE` macro that spawns a thread to settle
    one, and `PROMISE-THEN` for composing promises by continuation-passing
    instead of by blocking.
-3. **Channel** (`src/channel.lisp`, queued through `src/fifo.lisp`) -- a
-   Go-style CSP channel, buffered or unbuffered (true rendezvous), plus
-   `SELECT` (`src/select.lisp`) for waiting on several of them at once.
+3. **Channel** (`src/channel.lisp`, a preallocated ring buffer) -- a Go-style
+   CSP channel, buffered or unbuffered (true rendezvous), plus `SELECT`
+   (`src/select.lisp`) for waiting on several of them at once.
 4. **Executor** (`src/executor.lisp`) -- a fixed-size worker pool, Java's
-   `ExecutorService`, built on `PROMISE` for its results and `src/fifo.lisp`
-   for its work queue.
+   `ExecutorService`, built on `PROMISE` for its results and its own
+   preallocated ring buffer for its work queue.
 5. **Structured concurrency** (`src/scope-state.lisp`, `src/scope.lisp`) --
    `WITH-TASK-SCOPE`, a Kotlin/Swift/Python-trio-style nursery that
    guarantees every task `SPAWN`ed inside it has finished (or an optional

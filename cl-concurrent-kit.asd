@@ -67,7 +67,6 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "conditions")
    (:file "primitives")
    (:file "timeout")
-   (:file "fifo")
    (:file "promise")
    (:file "promise-combinators")
    (:file "channel")

@@ -2,10 +2,11 @@
 ;;;;
 ;;;; The single public package. Layers build on each other in the order they
 ;;;; are loaded (per cl-concurrent-kit.asd's :serial t): primitives wrap
-;;;; sb-thread; fifo is a private queue shared by channel and executor;
-;;;; promises (split into promise and promise-combinators), channels,
-;;;; executors, and scopes (split into scope-state and scope) are built on
-;;;; primitives alone, not on each other, except where noted.
+;;;; sb-thread; promises (split into promise and promise-combinators),
+;;;; channels, executors, and scopes (split into scope-state and scope) are
+;;;; built on primitives alone, not on each other, except where noted.
+;;;; CHANNEL and the executor's internal queue each keep their own
+;;;; preallocated ring buffer rather than sharing a queue implementation.
 (defpackage #:cl-concurrent-kit
   (:use #:cl)
   (:export
