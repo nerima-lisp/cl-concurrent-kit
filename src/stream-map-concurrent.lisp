@@ -75,33 +75,41 @@ its own dispatcher."
                   (completed 0)
                   (input-closed-p nil)
                   (ready (make-hash-table)))
-              (unwind-protect
-                  (loop
-                    (when scope (check-cancelled scope))
-                    (loop
-                      while (and (not input-closed-p) (< (- submitted completed) parallelism))
-                      do (multiple-value-bind (value received-p) (recv input)
-                           (if received-p
-                               (progn
-                                 (send jobs (list next-index value))
-                                 (incf next-index)
-                                 (incf submitted))
-                               (setf input-closed-p t))))
-                    (cond
-                      ((< completed submitted)
-                       (destructuring-bind (index kind value) (recv results)
-                         (incf completed)
-                         (if (eq kind :error)
-                             (error value)
-                             (setf (gethash index ready) value))
+              (labels ((fill-jobs ()
+                         ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
                          (loop
-                           (multiple-value-bind (next-value available-p) (gethash next-output-index ready)
+                           while (and (not input-closed-p) (< (- submitted completed) parallelism))
+                           do (multiple-value-bind (value received-p) (recv input)
+                                (if received-p
+                                    (progn
+                                      (send jobs (list next-index value))
+                                      (incf next-index)
+                                      (incf submitted))
+                                    (setf input-closed-p t)))))
+                       (drain-ready-outputs ()
+                         ;; Send every already-collected result in order, starting at
+                         ;; NEXT-OUTPUT-INDEX, until the next one is still missing.
+                         (loop
+                           (multiple-value-bind (value available-p) (gethash next-output-index ready)
                              (unless available-p (return))
                              (remhash next-output-index ready)
-                             (send output next-value)
-                             (incf next-output-index)))))
-                      (input-closed-p (return))))
-                (close-channel jobs))
+                             (send output value)
+                             (incf next-output-index))))
+                       (collect-one-result ()
+                         (destructuring-bind (index kind value) (recv results)
+                           (incf completed)
+                           (if (eq kind :error)
+                               (error value)
+                               (setf (gethash index ready) value))
+                           (drain-ready-outputs))))
+                (unwind-protect
+                    (loop
+                      (when scope (check-cancelled scope))
+                      (fill-jobs)
+                      (cond
+                        ((< completed submitted) (collect-one-result))
+                        (input-closed-p (return))))
+                  (close-channel jobs)))
               ;; A caller without a SCOPE still receives a completion promise
               ;; that settles only once every worker has actually exited.
               (unless scope
