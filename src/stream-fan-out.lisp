@@ -24,16 +24,13 @@ is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((outputs (loop repeat count collect (make-channel :buffer-size buffer-size))))
     (values
      outputs
-     (%start-channel-stage
-      (lambda ()
-        (let ((active-outputs outputs))
-          (%with-closed-stage-outputs (outputs)
-            (%consume-channel (value input scope nil)
-              (dolist (output active-outputs)
-                (handler-case (send output value)
-                  (channel-closed ()
-                    (setf active-outputs (remove output active-outputs :count 1)))))))))
-      :scope scope :executor executor :outputs outputs))))
+     (with-channel-stage (:scope scope :executor executor :outputs outputs)
+       (let ((active-outputs outputs))
+         (%consume-channel (value input scope nil)
+           (dolist (output active-outputs)
+             (handler-case (send output value)
+               (channel-closed ()
+                 (setf active-outputs (remove output active-outputs :count 1)))))))))))
 
 (defun channel-take (count input &key (buffer-size 0) scope executor)
   "Forward at most COUNT values from INPUT without consuming later values.
@@ -49,14 +46,11 @@ child; with EXECUTOR, it runs on that executor."
         (remaining count))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (when (plusp remaining)
-            (%consume-channel (value input scope nil)
-              (send output value)
-              (when (zerop (decf remaining)) (return))))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (when (plusp remaining)
+         (%consume-channel (value input scope nil)
+           (send output value)
+           (when (zerop (decf remaining)) (return))))))))
 
 (defun channel-drop (count input &key (buffer-size 0) scope executor)
   "Discard the first COUNT input values, then forward every remaining value.
@@ -85,13 +79,10 @@ stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (%consume-channel (value input scope nil)
-            (unless (funcall predicate value) (return))
-            (send output value))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (%consume-channel (value input scope nil)
+         (unless (funcall predicate value) (return))
+         (send output value))))))
 
 (defun channel-batch (size input &key (buffer-size 0) (emit-partial t) scope executor)
   "Forward INPUT values as ordered lists of up to SIZE elements.
@@ -106,19 +97,16 @@ on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (let ((batch nil)
-                (batch-size 0))
-            (%consume-channel (value input scope
-                                (progn
-                                  (when (and batch emit-partial)
-                                    (send output (nreverse batch)))
-                                  nil))
-              (push value batch)
-              (incf batch-size)
-              (when (= batch-size size)
-                (send output (nreverse batch))
-                (setf batch nil batch-size 0))))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (let ((batch nil)
+             (batch-size 0))
+         (%consume-channel (value input scope
+                             (progn
+                               (when (and batch emit-partial)
+                                 (send output (nreverse batch)))
+                               nil))
+           (push value batch)
+           (incf batch-size)
+           (when (= batch-size size)
+             (send output (nreverse batch))
+             (setf batch nil batch-size 0))))))))

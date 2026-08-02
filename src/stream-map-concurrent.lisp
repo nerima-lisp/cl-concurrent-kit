@@ -66,56 +66,53 @@ its own dispatcher."
                 (return-from channel-map-concurrent (values output completion)))))))
       (values
        output
-       (%start-channel-stage
-        (lambda ()
-          (%with-closed-stage-outputs ((list output))
-            (let ((next-index 0)
-                  (next-output-index 0)
-                  (submitted 0)
-                  (completed 0)
-                  (input-closed-p nil)
-                  (ready (make-hash-table)))
-              (labels ((fill-jobs ()
-                         ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
-                         (loop
-                           while (and (not input-closed-p) (< (- submitted completed) parallelism))
-                           do (multiple-value-bind (value received-p) (recv input)
-                                (if received-p
-                                    (progn
-                                      (send jobs (list next-index value))
-                                      (incf next-index)
-                                      (incf submitted))
-                                    (setf input-closed-p t)))))
-                       (drain-ready-outputs ()
-                         ;; Send every already-collected result in order, starting at
-                         ;; NEXT-OUTPUT-INDEX, until the next one is still missing.
-                         (loop
-                           (multiple-value-bind (value available-p) (gethash next-output-index ready)
-                             (unless available-p (return))
-                             (remhash next-output-index ready)
-                             (send output value)
-                             (incf next-output-index))))
-                       (collect-one-result ()
-                         (destructuring-bind (index kind value) (recv results)
-                           (incf completed)
-                           (if (eq kind :error)
-                               (error value)
-                               (setf (gethash index ready) value))
-                           (drain-ready-outputs))))
-                (unwind-protect
-                    (loop
-                      (when scope (check-cancelled scope))
-                      (fill-jobs)
-                      (cond
-                        ((< completed submitted) (collect-one-result))
-                        (input-closed-p (return))))
-                  (close-channel jobs)))
-              ;; A caller without a SCOPE still receives a completion promise
-              ;; that settles only once every worker has actually exited.
-              (unless scope
-                (dolist (worker-completion worker-completions)
-                  (await worker-completion))))))
-        :scope scope :executor nil :outputs (list jobs results output))))))
+       (with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
+         (let ((next-index 0)
+               (next-output-index 0)
+               (submitted 0)
+               (completed 0)
+               (input-closed-p nil)
+               (ready (make-hash-table)))
+           (labels ((fill-jobs ()
+                      ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
+                      (loop
+                        while (and (not input-closed-p) (< (- submitted completed) parallelism))
+                        do (multiple-value-bind (value received-p) (recv input)
+                             (if received-p
+                                 (progn
+                                   (send jobs (list next-index value))
+                                   (incf next-index)
+                                   (incf submitted))
+                                 (setf input-closed-p t)))))
+                    (drain-ready-outputs ()
+                      ;; Send every already-collected result in order, starting at
+                      ;; NEXT-OUTPUT-INDEX, until the next one is still missing.
+                      (loop
+                        (multiple-value-bind (value available-p) (gethash next-output-index ready)
+                          (unless available-p (return))
+                          (remhash next-output-index ready)
+                          (send output value)
+                          (incf next-output-index))))
+                    (collect-one-result ()
+                      (destructuring-bind (index kind value) (recv results)
+                        (incf completed)
+                        (if (eq kind :error)
+                            (error value)
+                            (setf (gethash index ready) value))
+                        (drain-ready-outputs))))
+             (unwind-protect
+                 (loop
+                   (when scope (check-cancelled scope))
+                   (fill-jobs)
+                   (cond
+                     ((< completed submitted) (collect-one-result))
+                     (input-closed-p (return))))
+               (close-channel jobs)))
+           ;; A caller without a SCOPE still receives a completion promise
+           ;; that settles only once every worker has actually exited.
+           (unless scope
+             (dolist (worker-completion worker-completions)
+               (await worker-completion)))))))))
 
 (defun channel-map-unordered (parallelism function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to INPUT concurrently across up to PARALLELISM workers,
@@ -155,37 +152,34 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
                 (return-from channel-map-unordered (values output completion)))))))
       (values
        output
-       (%start-channel-stage
-        (lambda ()
-          (%with-closed-stage-outputs ((list output))
-            (let ((submitted 0)
-                  (completed 0)
-                  (input-closed-p nil))
-              (labels ((fill-jobs ()
-                         ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
-                         (loop
-                           while (and (not input-closed-p) (< (- submitted completed) parallelism))
-                           do (multiple-value-bind (value received-p) (recv input)
-                                (if received-p
-                                    (progn (send jobs value) (incf submitted))
-                                    (setf input-closed-p t)))))
-                       (collect-one-result ()
-                         (destructuring-bind (kind value) (recv results)
-                           (incf completed)
-                           (if (eq kind :error)
-                               (error value)
-                               (send output value)))))
-                (unwind-protect
-                    (loop
-                      (when scope (check-cancelled scope))
-                      (fill-jobs)
-                      (cond
-                        ((< completed submitted) (collect-one-result))
-                        (input-closed-p (return))))
-                  (close-channel jobs)))
-              (unless scope
-                (dolist (worker-completion worker-completions)
-                  (await worker-completion))))))
-        :scope scope :executor nil :outputs (list jobs results output))))))
+       (with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
+         (let ((submitted 0)
+               (completed 0)
+               (input-closed-p nil))
+           (labels ((fill-jobs ()
+                      ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
+                      (loop
+                        while (and (not input-closed-p) (< (- submitted completed) parallelism))
+                        do (multiple-value-bind (value received-p) (recv input)
+                             (if received-p
+                                 (progn (send jobs value) (incf submitted))
+                                 (setf input-closed-p t)))))
+                    (collect-one-result ()
+                      (destructuring-bind (kind value) (recv results)
+                        (incf completed)
+                        (if (eq kind :error)
+                            (error value)
+                            (send output value)))))
+             (unwind-protect
+                 (loop
+                   (when scope (check-cancelled scope))
+                   (fill-jobs)
+                   (cond
+                     ((< completed submitted) (collect-one-result))
+                     (input-closed-p (return))))
+               (close-channel jobs)))
+           (unless scope
+             (dolist (worker-completion worker-completions)
+               (await worker-completion)))))))))
 
 (declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

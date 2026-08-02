@@ -62,6 +62,24 @@ started."
           (let ((promise (make-promise)))
             (deliver-error promise condition)))))))
 
+(defmacro with-channel-stage ((&key scope executor outputs) &body body)
+  "Run BODY as a stage worker via %START-CHANNEL-STAGE, the shape every
+stage below that runs a literal BODY (as opposed to CHANNEL-MAP-CONCURRENT
+and CHANNEL-MAP-UNORDERED's own worker pool, which starts a runtime-variable
+number of copies of one named function and so calls %START-CHANNEL-STAGE
+directly) repeats around it: wrap FUNCTION in a LAMBDA, and if OUTPUTS is
+supplied, wrap BODY again in %WITH-CLOSED-STAGE-OUTPUTS against it, closing
+every output channel on every exit path. Omit OUTPUTS for a stage
+(CHANNEL-REDUCE, CHANNEL-COLLECT, and similar) that only consumes INPUT into
+a promise and owns no channel of its own to close."
+  (if outputs
+      (let ((outputs-var (gensym "OUTPUTS")))
+        `(let ((,outputs-var ,outputs))
+           (%start-channel-stage
+            (lambda () (%with-closed-stage-outputs (,outputs-var) ,@body))
+            :scope ,scope :executor ,executor :outputs ,outputs-var)))
+      `(%start-channel-stage (lambda () ,@body) :scope ,scope :executor ,executor)))
+
 (defun %make-channel-emitting-stage (input buffer-size scope executor emit-values)
   "Create a stage that calls EMIT-VALUES for every value received from INPUT.
 
@@ -71,15 +89,12 @@ one value to the output channel, preserving stage ordering and backpressure."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (loop
-            (when scope (check-cancelled scope))
-            (multiple-value-bind (value received-p) (recv input)
-              (unless received-p (return))
-              (funcall emit-values value (lambda (result) (send output result)))))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (loop
+         (when scope (check-cancelled scope))
+         (multiple-value-bind (value received-p) (recv input)
+           (unless received-p (return))
+           (funcall emit-values value (lambda (result) (send output result)))))))))
 
 (defun %make-channel-source (buffer-size scope executor produce-values)
   "Create a source stage that calls PRODUCE-VALUES with its EMIT function.
@@ -89,12 +104,9 @@ preserving backpressure."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (funcall produce-values (lambda (value) (send output value)))
-          nil))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (funcall produce-values (lambda (value) (send output value)))
+       nil))))
 
 (defmacro channel-producer ((emit &key (buffer-size 0) scope executor) &body body)
   "Create an asynchronous channel source whose BODY sends values through
@@ -184,47 +196,44 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (let ((pending-value nil)
-                (pending-p nil))
-            ;; An explicit named block, not the (LOOP ...)'s own implicit
-            ;; NIL block: SELECT below macro-inlines its own internal
-            ;; probing loop, which establishes ITS OWN implicit NIL block
-            ;; textually closer to the clause body than this one -- a bare
-            ;; (RETURN) inside a SELECT clause exits SELECT's own loop, not
-            ;; this one, leaving PENDING-P still true and this loop looping
-            ;; again to redeliver an already-sent PENDING-VALUE into a
-            ;; channel nothing is still draining, and hanging forever.
-            (block debounce
-              (labels ((wait-for-first-value ()
-                         (multiple-value-bind (value received-p) (recv input)
-                           (unless received-p (return-from debounce))
-                           (setf pending-value value pending-p t)))
-                       (wait-for-quiet-or-flush ()
-                         (select
-                           ((recv input) (value)
-                            ;; SELECT's RECV clause binds only VALUE, unlike plain
-                            ;; RECV's own (VALUES VALUE RECEIVED-P) -- it fires
-                            ;; alike for a genuinely received value and for INPUT
-                            ;; closed-and-drained (VALUE then NIL), with no
-                            ;; RECEIVED-P of its own to tell them apart. A NIL
-                            ;; VALUE while INPUT is already closed is therefore
-                            ;; taken as "no more values are coming" and flushes
-                            ;; PENDING-VALUE -- ambiguous only for a channel that
-                            ;; deliberately sends NIL as a real value, which
-                            ;; CHANNEL-DEBOUNCE does not support distinguishing.
-                            (if (and (null value) (channel-closed-p input))
-                                (progn (send output pending-value) (return-from debounce))
-                                (setf pending-value value)))
-                           (:timeout interval ()
-                            (send output pending-value)
-                            (setf pending-p nil)))))
-                (loop
-                  (when scope (check-cancelled scope))
-                  (if pending-p (wait-for-quiet-or-flush) (wait-for-first-value))))))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (let ((pending-value nil)
+             (pending-p nil))
+         ;; An explicit named block, not the (LOOP ...)'s own implicit
+         ;; NIL block: SELECT below macro-inlines its own internal
+         ;; probing loop, which establishes ITS OWN implicit NIL block
+         ;; textually closer to the clause body than this one -- a bare
+         ;; (RETURN) inside a SELECT clause exits SELECT's own loop, not
+         ;; this one, leaving PENDING-P still true and this loop looping
+         ;; again to redeliver an already-sent PENDING-VALUE into a
+         ;; channel nothing is still draining, and hanging forever.
+         (block debounce
+           (labels ((wait-for-first-value ()
+                      (multiple-value-bind (value received-p) (recv input)
+                        (unless received-p (return-from debounce))
+                        (setf pending-value value pending-p t)))
+                    (wait-for-quiet-or-flush ()
+                      (select
+                        ((recv input) (value)
+                         ;; SELECT's RECV clause binds only VALUE, unlike plain
+                         ;; RECV's own (VALUES VALUE RECEIVED-P) -- it fires
+                         ;; alike for a genuinely received value and for INPUT
+                         ;; closed-and-drained (VALUE then NIL), with no
+                         ;; RECEIVED-P of its own to tell them apart. A NIL
+                         ;; VALUE while INPUT is already closed is therefore
+                         ;; taken as "no more values are coming" and flushes
+                         ;; PENDING-VALUE -- ambiguous only for a channel that
+                         ;; deliberately sends NIL as a real value, which
+                         ;; CHANNEL-DEBOUNCE does not support distinguishing.
+                         (if (and (null value) (channel-closed-p input))
+                             (progn (send output pending-value) (return-from debounce))
+                             (setf pending-value value)))
+                        (:timeout interval ()
+                         (send output pending-value)
+                         (setf pending-p nil)))))
+             (loop
+               (when scope (check-cancelled scope))
+               (if pending-p (wait-for-quiet-or-flush) (wait-for-first-value))))))))))
 
 (defun channel-flat-map (function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to each INPUT value and forward every value in its
@@ -248,18 +257,15 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
         (next-emit-time nil))
     (values
      output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (loop
-            (when scope (check-cancelled scope))
-            (multiple-value-bind (value received-p) (recv input)
-              (unless received-p (return))
-              (let ((now (get-internal-real-time)))
-                (when (or (null next-emit-time) (>= now next-emit-time))
-                  (send output value)
-                  (setf next-emit-time (+ now (round (* interval internal-time-units-per-second))))))))))
-      :scope scope :executor executor :outputs (list output)))))
+     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+       (loop
+         (when scope (check-cancelled scope))
+         (multiple-value-bind (value received-p) (recv input)
+           (unless received-p (return))
+           (let ((now (get-internal-real-time)))
+             (when (or (null next-emit-time) (>= now next-emit-time))
+               (send output value)
+               (setf next-emit-time (+ now (round (* interval internal-time-units-per-second))))))))))))
 
 (defun channel-scan (function initial-value input &key (buffer-size 0) scope executor)
   "Accumulate INPUT with FUNCTION (called with the previous accumulator and
@@ -299,11 +305,9 @@ a reducer failure cancels SCOPE; with EXECUTOR, it runs on that executor.
 Synchronous task-start failures are reported through the returned promise."
   (check-type input channel)
   (let ((accumulator initial-value))
-    (%start-channel-stage
-     (lambda ()
-       (%consume-channel (value input scope accumulator)
-         (setf accumulator (funcall function accumulator value))))
-     :scope scope :executor executor)))
+    (with-channel-stage (:scope scope :executor executor)
+      (%consume-channel (value input scope accumulator)
+        (setf accumulator (funcall function accumulator value))))))
 
 (defun channel-collect (input &key scope executor)
   "Collect INPUT into a promise for a list of its values in input order.
@@ -312,11 +316,9 @@ The promise resolves once INPUT closes, or rejects if INPUT, SCOPE, or
 EXECUTOR fails."
   (check-type input channel)
   (let (reversed-values)
-    (%start-channel-stage
-     (lambda ()
-       (%consume-channel (value input scope (nreverse reversed-values))
-         (push value reversed-values)))
-     :scope scope :executor executor)))
+    (with-channel-stage (:scope scope :executor executor)
+      (%consume-channel (value input scope (nreverse reversed-values))
+        (push value reversed-values)))))
 
 (defun channel-each (function input &key scope executor)
   "Consume every value from INPUT with FUNCTION, in input order, and return
@@ -324,11 +326,9 @@ a completion promise resolving to NIL once INPUT closes, or rejecting if
 FUNCTION, INPUT, SCOPE, or EXECUTOR fails."
   (check-type function function)
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (%consume-channel (value input scope nil)
-       (funcall function value)))
-   :scope scope :executor executor))
+  (with-channel-stage (:scope scope :executor executor)
+    (%consume-channel (value input scope nil)
+      (funcall function value))))
 
 (defun channel-some (predicate input &key scope executor)
   "Resolve to the first truthy result of PREDICATE over INPUT, stopping
@@ -336,12 +336,10 @@ there and leaving later input values available. Resolves to NIL once INPUT
 closes without a match."
   (check-type predicate function)
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (%consume-channel (value input scope nil)
-       (let ((result (funcall predicate value)))
-         (when result (return result)))))
-   :scope scope :executor executor))
+  (with-channel-stage (:scope scope :executor executor)
+    (%consume-channel (value input scope nil)
+      (let ((result (funcall predicate value)))
+        (when result (return result))))))
 
 (defun channel-every (predicate input &key scope executor)
   "Resolve to T once PREDICATE holds for every value received from INPUT --
@@ -349,11 +347,9 @@ stopping and resolving to NIL after the first false result, and leaving
 later input values available."
   (check-type predicate function)
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (%consume-channel (value input scope t)
-       (unless (funcall predicate value) (return nil))))
-   :scope scope :executor executor))
+  (with-channel-stage (:scope scope :executor executor)
+    (%consume-channel (value input scope t)
+      (unless (funcall predicate value) (return nil)))))
 
 (defun channel-find (predicate input &key scope executor)
   "Resolve to the first INPUT value for which PREDICATE is truthy, stopping
@@ -361,8 +357,6 @@ there and leaving later input values available. Resolves to NIL once INPUT
 closes without a match."
   (check-type predicate function)
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (%consume-channel (value input scope nil)
-       (when (funcall predicate value) (return value))))
-   :scope scope :executor executor))
+  (with-channel-stage (:scope scope :executor executor)
+    (%consume-channel (value input scope nil)
+      (when (funcall predicate value) (return value)))))
