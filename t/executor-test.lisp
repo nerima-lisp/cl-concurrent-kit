@@ -316,6 +316,21 @@
         ;; still be NIL here, if OCCUPY-WORKER's own guard is what unwound
         ;; this form.
         (when release (signal-semaphore release))
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "grows an unbounded queue's ring buffer past its initial capacity"
+    (let ((executor (make-executor :size 1))
+          (ran 0)
+          release)
+      (unwind-protect
+          (progn
+            (setf release (occupy-worker executor))
+            (dotimes (i 100) (declare (ignore i)) (submit executor (lambda () (incf ran))))
+            (expect (executor-queue-depth executor) :to-be 100)
+            (signal-semaphore release)
+            (loop until (zerop (executor-queue-depth executor)) do (sleep 0.001))
+            (expect ran :to-be 100))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1)))))
 
 (describe "bounded executor queue"
