@@ -24,7 +24,7 @@ is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((outputs (loop repeat count collect (make-channel :buffer-size buffer-size))))
     (values
      outputs
-     (with-channel-stage (:scope scope :executor executor :outputs outputs)
+     (%with-channel-stage (:scope scope :executor executor :outputs outputs)
        (let ((active-outputs outputs))
          (%consume-channel (value input scope nil)
            (dolist (output active-outputs)
@@ -46,7 +46,7 @@ child; with EXECUTOR, it runs on that executor."
         (remaining count))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (when (plusp remaining)
          (%consume-channel (value input scope nil)
            (send output value)
@@ -79,7 +79,7 @@ stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (%consume-channel (value input scope nil)
          (unless (funcall predicate value) (return))
          (send output value))))))
@@ -97,7 +97,7 @@ on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (let ((batch nil)
              (batch-size 0))
          (%consume-channel (value input scope

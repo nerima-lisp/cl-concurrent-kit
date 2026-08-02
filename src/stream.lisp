@@ -62,7 +62,7 @@ started."
           (let ((promise (make-promise)))
             (deliver-error promise condition)))))))
 
-(defmacro with-channel-stage ((&key scope executor outputs) &body body)
+(defmacro %with-channel-stage ((&key scope executor outputs) &body body)
   "Run BODY as a stage worker via %START-CHANNEL-STAGE, the shape every
 stage below that runs a literal BODY (as opposed to CHANNEL-MAP-CONCURRENT
 and CHANNEL-MAP-UNORDERED's own worker pool, which starts a runtime-variable
@@ -89,7 +89,7 @@ one value to the output channel, preserving stage ordering and backpressure."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (loop
          (when scope (check-cancelled scope))
          (multiple-value-bind (value received-p) (recv input)
@@ -104,7 +104,7 @@ preserving backpressure."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (funcall produce-values (lambda (value) (send output value)))
        nil))))
 
@@ -196,7 +196,7 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (let ((pending-value nil)
              (pending-p nil))
          ;; An explicit named block, not the (LOOP ...)'s own implicit
@@ -257,7 +257,7 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
         (next-emit-time nil))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (loop
          (when scope (check-cancelled scope))
          (multiple-value-bind (value received-p) (recv input)
@@ -305,7 +305,7 @@ a reducer failure cancels SCOPE; with EXECUTOR, it runs on that executor.
 Synchronous task-start failures are reported through the returned promise."
   (check-type input channel)
   (let ((accumulator initial-value))
-    (with-channel-stage (:scope scope :executor executor)
+    (%with-channel-stage (:scope scope :executor executor)
       (%consume-channel (value input scope accumulator)
         (setf accumulator (funcall function accumulator value))))))
 
@@ -316,7 +316,7 @@ The promise resolves once INPUT closes, or rejects if INPUT, SCOPE, or
 EXECUTOR fails."
   (check-type input channel)
   (let (reversed-values)
-    (with-channel-stage (:scope scope :executor executor)
+    (%with-channel-stage (:scope scope :executor executor)
       (%consume-channel (value input scope (nreverse reversed-values))
         (push value reversed-values)))))
 
@@ -326,7 +326,7 @@ a completion promise resolving to NIL once INPUT closes, or rejecting if
 FUNCTION, INPUT, SCOPE, or EXECUTOR fails."
   (check-type function function)
   (check-type input channel)
-  (with-channel-stage (:scope scope :executor executor)
+  (%with-channel-stage (:scope scope :executor executor)
     (%consume-channel (value input scope nil)
       (funcall function value))))
 
@@ -336,7 +336,7 @@ there and leaving later input values available. Resolves to NIL once INPUT
 closes without a match."
   (check-type predicate function)
   (check-type input channel)
-  (with-channel-stage (:scope scope :executor executor)
+  (%with-channel-stage (:scope scope :executor executor)
     (%consume-channel (value input scope nil)
       (let ((result (funcall predicate value)))
         (when result (return result))))))
@@ -347,7 +347,7 @@ stopping and resolving to NIL after the first false result, and leaving
 later input values available."
   (check-type predicate function)
   (check-type input channel)
-  (with-channel-stage (:scope scope :executor executor)
+  (%with-channel-stage (:scope scope :executor executor)
     (%consume-channel (value input scope t)
       (unless (funcall predicate value) (return nil)))))
 
@@ -357,6 +357,6 @@ there and leaving later input values available. Resolves to NIL once INPUT
 closes without a match."
   (check-type predicate function)
   (check-type input channel)
-  (with-channel-stage (:scope scope :executor executor)
+  (%with-channel-stage (:scope scope :executor executor)
     (%consume-channel (value input scope nil)
       (when (funcall predicate value) (return value)))))

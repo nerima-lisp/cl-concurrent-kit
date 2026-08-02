@@ -69,7 +69,7 @@ write to OUTPUT-VAR."
      (dolist (input ,inputs-var) (check-type input channel))
      (values
       ,output-var
-      (with-channel-stage (:scope ,scope :executor ,executor :outputs (list ,output-var))
+      (%with-channel-stage (:scope ,scope :executor ,executor :outputs (list ,output-var))
         ,@body))))
 
 (defun channel-merge (channels &key (buffer-size 0) scope executor)
@@ -143,7 +143,7 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (loop
          (when scope (check-cancelled scope))
          (multiple-value-bind (value received-p) (recv input)
@@ -167,7 +167,7 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (let ((inner-channels nil)
              (input-open-p t))
          (flet ((on-input (value received-p)
@@ -196,7 +196,7 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (let ((inner nil)
              (input-open-p t))
          (flet ((on-input (value received-p)

@@ -66,7 +66,7 @@ its own dispatcher."
                 (return-from channel-map-concurrent (values output completion)))))))
       (values
        output
-       (with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
+       (%with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
          (let ((next-index 0)
                (next-output-index 0)
                (submitted 0)
@@ -152,7 +152,7 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
                 (return-from channel-map-unordered (values output completion)))))))
       (values
        output
-       (with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
+       (%with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
          (let ((submitted 0)
                (completed 0)
                (input-closed-p nil))

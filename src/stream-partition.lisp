@@ -17,7 +17,7 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
   (let ((output (make-channel :buffer-size buffer-size)))
     (values
      output
-     (with-channel-stage (:scope scope :executor executor :outputs (list output))
+     (%with-channel-stage (:scope scope :executor executor :outputs (list output))
        (let ((group-reversed nil)
              (group-key nil)
              (group-p nil))

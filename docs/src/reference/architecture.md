@@ -414,8 +414,8 @@ unevaluated, needed for no reason a function argument could ever supply
 (`%START-CHANNEL-STAGE`'s own argument is *called*, not macroexpanded, so
 by the time it runs the caller's local variables it closes over are already
 fully evaluated) -- exactly this document's own first criterion for a
-macro. `WITH-CHANNEL-STAGE` names that repeated wrapping once; every
-stream stage that runs a literal body now reads `(WITH-CHANNEL-STAGE (:SCOPE
+macro. `%WITH-CHANNEL-STAGE` names that repeated wrapping once; every
+stream stage that runs a literal body now reads `(%WITH-CHANNEL-STAGE (:SCOPE
 ... :OUTPUTS ...) BODY)` instead of the three-way nesting. The two exceptions
 -- `CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED`'s own worker pools,
 just below -- still call `%START-CHANNEL-STAGE` directly, because they start
@@ -553,19 +553,19 @@ in this codebase.
 `WITH-EXECUTOR`, `WITH-LOCK-HELD`, `%WAIT-UNTIL`, `%WITH-DEADLINE-WAIT`,
 `%WITH-SCOPE-LOCK`, `%UNLESS-DECIDED`, `%DECIDE-ONCE`, `%WITH-RACE-CLEANUP`,
 `WITH-TASK-SCOPE`, `%WITH-CHANNEL-LIST-STAGE`, `%WITH-CLOSED-STAGE-OUTPUTS`,
-`WITH-CHANNEL-STAGE`, `CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`,
+`%WITH-CHANNEL-STAGE`, `CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`,
 `SELECT`, and `WITH-TIMEOUT`. That ratio is not an oversight to correct
 toward more macros; it reflects a specific, checkable criterion for which
 shape a given piece of code needs -- checked again, and found to justify one
 more macro, when `%START-CHANNEL-STAGE`'s call sites turned out to repeat the
 same unevaluated-body wrapping at every one of them (see "%START-CHANNEL-STAGE
-... `WITH-CHANNEL-STAGE`" above).
+... `%WITH-CHANNEL-STAGE`" above).
 
 A macro earns its place here for one of two reasons. Either it needs
 `BODY` unevaluated -- an unwind-protected critical section
 (`%WITH-CHANNEL-LOCK`, `%WITH-SCOPE-LOCK`, `%WITH-DEADLINE-WAIT`), a
 resource-scoped binding (`WITH-EXECUTOR`, `WITH-TASK-SCOPE`,
-`WITH-TIMEOUT`, `CHANNEL-PRODUCER`, `WITH-CHANNEL-STAGE`), or a loop skeleton
+`WITH-TIMEOUT`, `CHANNEL-PRODUCER`, `%WITH-CHANNEL-STAGE`), or a loop skeleton
 whose per-iteration work varies by caller (`%CONSUME-CHANNEL`,
 `%WITH-RACE-CLEANUP`) -- none of which a function can express, since a
 function's arguments are evaluated before it ever runs. Or its clause/branch
