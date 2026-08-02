@@ -43,7 +43,7 @@ my %non_executable_da = map { $_ => 1 } qw(
   promise.lisp:15 promise.lisp:16 promise.lisp:21 promise.lisp:22
   promise-combinators.lisp:12 promise-combinators.lisp:19 promise-combinators.lisp:20
   promise-combinators.lisp:21
-  channel.lisp:9 channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13
+  channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13
   channel.lisp:14 channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19
   channel.lisp:20 channel.lisp:21 channel.lisp:22 channel.lisp:23 channel.lisp:24
   channel.lisp:25 channel.lisp:26 channel.lisp:27 channel.lisp:28 channel.lisp:29
