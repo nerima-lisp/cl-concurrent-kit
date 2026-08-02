@@ -8,7 +8,7 @@
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-map-concurrent 3 (lambda (delay) (sleep delay) delay) input)
-        (expect (loop for value = (recv output :timeout 2) while value collect value)
+        (expect (drain-channel output :timeout 2)
                 :to-equal (list 0.03 0.01 0.02))
         (await completion :timeout 2))))
 
@@ -33,7 +33,7 @@
       (with-task-scope (scope)
         (multiple-value-bind (output completion)
             (channel-map-concurrent 2 (function identity) input :scope scope)
-          (expect (sort (loop for value = (recv output :timeout 2) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 2) (function <))
                   :to-equal (list 1 2 3))
           (await completion :timeout 2)))))
 
@@ -44,7 +44,7 @@
       (with-executor (executor :size 2)
         (multiple-value-bind (output completion)
             (channel-map-concurrent 5 (lambda (x) (* x x)) input :executor executor)
-          (expect (sort (loop for value = (recv output :timeout 2) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 2) (function <))
                   :to-equal (list 1 4 9))
           (await completion :timeout 2)))))
 
@@ -85,7 +85,7 @@
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-map-unordered 4 (lambda (x) (* x x)) input)
-        (expect (sort (loop for value = (recv output :timeout 2) while value collect value) (function <))
+        (expect (sort (drain-channel output :timeout 2) (function <))
                 :to-equal (list 1 4 9 16))
         (await completion :timeout 2))))
 
@@ -96,7 +96,7 @@
       (with-task-scope (scope)
         (multiple-value-bind (output completion)
             (channel-map-unordered 2 (function identity) input :scope scope)
-          (expect (sort (loop for value = (recv output :timeout 2) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 2) (function <))
                   :to-equal (list 1 2 3))
           (await completion :timeout 2)))))
 
@@ -107,7 +107,7 @@
       (with-executor (executor :size 2)
         (multiple-value-bind (output completion)
             (channel-map-unordered 5 (lambda (x) (* x x)) input :executor executor)
-          (expect (sort (loop for value = (recv output :timeout 2) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 2) (function <))
                   :to-equal (list 1 4 9))
           (await completion :timeout 2)))))
 
@@ -126,7 +126,7 @@
       (send a 1) (send a 2) (close-channel a)
       (send b :x) (send b :y) (close-channel b)
       (multiple-value-bind (output completion) (channel-merge (list a b))
-        (let ((received (loop for value = (recv output :timeout 1) while value collect value)))
+        (let ((received (drain-channel output :timeout 1)))
           (expect (sort (remove-if-not (function numberp) received) (function <)) :to-equal (list 1 2))
           (expect (remove-if-not (function keywordp) received) :to-equal (list :x :y)))
         (await completion :timeout 1))))
@@ -150,7 +150,7 @@
       (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-merge (list a b) :scope scope)
-          (expect (sort (loop for value = (recv output :timeout 1) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 1) (function <))
                   :to-equal (list 1 2))
           (await completion :timeout 1))))))
 
@@ -163,7 +163,7 @@
       (close-channel a)
       (close-channel b)
       (multiple-value-bind (output completion) (channel-zip (list a b))
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list (list 1 :a) (list 2 :b)))
         (await completion :timeout 1))))
 
@@ -175,7 +175,7 @@
       (close-channel a)
       (close-channel b)
       (multiple-value-bind (output completion) (channel-zip (list a b))
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list (list 1 :only)))
         (await completion :timeout 1))))
 
@@ -188,7 +188,7 @@
       (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-zip (list a b) :scope scope)
-          (expect (loop for value = (recv output :timeout 1) while value collect value)
+          (expect (drain-channel output :timeout 1)
                   :to-equal (list (list 1 :a) (list 2 :b)))
           (await completion :timeout 1))))))
 
@@ -199,7 +199,7 @@
       (send a 1) (send a 2) (close-channel a)
       (send b 3) (send b 4) (close-channel b)
       (multiple-value-bind (output completion) (channel-concat (list a b))
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 2 3 4))
         (await completion :timeout 1))))
 
@@ -210,7 +210,7 @@
       (send b 3) (send b 4) (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-concat (list a b) :scope scope)
-          (expect (loop for value = (recv output :timeout 1) while value collect value)
+          (expect (drain-channel output :timeout 1)
                   :to-equal (list 1 2 3 4))
           (await completion :timeout 1))))))
 
@@ -221,7 +221,7 @@
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-concat-map (lambda (x) (nth-value 0 (channel-from-sequence (list x (* x 10))))) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 10 2 20))
         (await completion :timeout 1))))
 
@@ -233,7 +233,7 @@
         (multiple-value-bind (output completion)
             (channel-concat-map (lambda (x) (nth-value 0 (channel-from-sequence (list x (* x 10)))))
                                  input :scope scope)
-          (expect (loop for value = (recv output :timeout 1) while value collect value)
+          (expect (drain-channel output :timeout 1)
                   :to-equal (list 1 10 2 20))
           (await completion :timeout 1))))))
 
@@ -245,7 +245,7 @@
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-merge-map (lambda (xs) (nth-value 0 (channel-from-sequence xs))) input :parallelism 2)
-        (expect (sort (loop for value = (recv output :timeout 1) while value collect value) (function <))
+        (expect (sort (drain-channel output :timeout 1) (function <))
                 :to-equal (list 1 2 3 4))
         (await completion :timeout 1))))
 
@@ -258,7 +258,7 @@
         (multiple-value-bind (output completion)
             (channel-merge-map (lambda (xs) (nth-value 0 (channel-from-sequence xs))) input
                                 :parallelism 2 :scope scope)
-          (expect (sort (loop for value = (recv output :timeout 1) while value collect value) (function <))
+          (expect (sort (drain-channel output :timeout 1) (function <))
                   :to-equal (list 1 2 3 4))
           (await completion :timeout 1))))))
 

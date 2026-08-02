@@ -108,3 +108,25 @@ tests that must inspect which promise, channel, or executor a condition names."
        (progn ,form (error "expected ~S to signal ~S but it returned normally" ',form ',condition-type))
      (,condition-type (,condition-var)
        ,@checks)))
+
+(defun drain-channel (channel &key (timeout 1))
+  "Receive every value from CHANNEL until it closes, returning them as a
+list in receive order. Blocks up to TIMEOUT seconds per RECV -- the common
+\"run a stage to completion and collect its output\" shape nearly every
+stream stage test needs."
+  (loop for value = (recv channel :timeout timeout)
+        while value
+        collect value))
+
+(defmacro with-cancelled-scope ((scope) &body body)
+  "Run BODY inside a fresh WITH-TASK-SCOPE that also SPAWNs a sibling task
+which immediately fails, cancelling every other task in the scope
+cooperatively, then swallow the resulting SCOPE-ERROR -- the common
+\"confirm a blocked operation observes cancellation\" test shape. BODY is
+responsible for recording whatever it needs to EXPECT afterward, since the
+SCOPE-ERROR itself carries no information a caller here wants."
+  `(handler-case
+       (with-task-scope (,scope)
+         (spawn ,scope (lambda () (error "boom")))
+         ,@body)
+     (scope-error () nil)))

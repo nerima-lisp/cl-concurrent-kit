@@ -7,7 +7,7 @@
       (dolist (x (list 1 1 2 2 2 3)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-partition-by (function identity) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list (list 1 1) (list 2 2 2) (list 3)))
         (await completion :timeout 1))))
 
@@ -16,7 +16,7 @@
       (dolist (x (list :a :a :b :a)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-partition-by (function identity) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list (list :a :a) (list :b) (list :a)))
         (await completion :timeout 1))))
 
@@ -36,6 +36,6 @@
       (with-task-scope (scope)
         (multiple-value-bind (output completion)
             (channel-partition-by (function identity) input :scope scope)
-          (expect (loop for value = (recv output :timeout 1) while value collect value)
+          (expect (drain-channel output :timeout 1)
                   :to-equal (list (list 1 1) (list 2 2 2) (list 3)))
           (await completion :timeout 1))))))

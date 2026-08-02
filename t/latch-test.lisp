@@ -40,12 +40,9 @@
   (it "signals TASK-CANCELLED when its SCOPE is cancelled first"
     (let ((latch (make-countdown-latch 1))
           (cancelled-p nil))
-      (handler-case
-          (with-task-scope (scope)
-            (spawn scope (lambda () (error "boom")))
-            (handler-case (await-latch latch :timeout 1 :scope scope)
-              (task-cancelled () (setf cancelled-p t))))
-        (scope-error () nil))
+      (with-cancelled-scope (scope)
+        (handler-case (await-latch latch :timeout 1 :scope scope)
+          (task-cancelled () (setf cancelled-p t))))
       (expect cancelled-p :to-be-truthy)))
 
   (it "signals TASK-CANCELLED immediately when its SCOPE is already cancelled before the call"
@@ -112,12 +109,9 @@
   (it "signals TASK-CANCELLED and breaks the barrier when its SCOPE is cancelled"
     (let ((barrier (make-barrier 2))
           (cancelled-p nil))
-      (handler-case
-          (with-task-scope (scope)
-            (spawn scope (lambda () (error "boom")))
-            (handler-case (await-barrier barrier :timeout 1 :scope scope)
-              (task-cancelled () (setf cancelled-p t))))
-        (scope-error () nil))
+      (with-cancelled-scope (scope)
+        (handler-case (await-barrier barrier :timeout 1 :scope scope)
+          (task-cancelled () (setf cancelled-p t))))
       (expect cancelled-p :to-be-truthy)
       (expect (barrier-broken-p barrier) :to-be-truthy)))
 

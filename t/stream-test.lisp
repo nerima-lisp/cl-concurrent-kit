@@ -8,9 +8,7 @@
           (funcall emit 1)
           (funcall emit 2)
           (funcall emit 3))
-      (expect (loop for value = (recv output :timeout 1)
-                     while value
-                     collect value)
+      (expect (drain-channel output :timeout 1)
               :to-equal (list 1 2 3))
       (await completion :timeout 1))))
 
@@ -19,7 +17,7 @@
     (let ((source (list 1 2 3)))
       (multiple-value-bind (output completion) (channel-from-sequence source)
         (setf (first source) :mutated-after-the-fact)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 2 3))
         (await completion :timeout 1)))))
 
@@ -28,7 +26,7 @@
     (let ((input (make-channel :buffer-size 3)))
       (send input 1) (send input 2) (send input 3) (close-channel input)
       (multiple-value-bind (output completion) (channel-map (lambda (x) (* x x)) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 4 9))
         (await completion :timeout 1))))
 
@@ -44,7 +42,7 @@
       (send input 1) (send input 2) (send input 3) (close-channel input)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-map (lambda (x) (* x x)) input :scope scope)
-          (expect (loop for value = (recv output :timeout 1) while value collect value)
+          (expect (drain-channel output :timeout 1)
                   :to-equal (list 1 4 9))
           (await completion :timeout 1)))))
 
@@ -61,7 +59,7 @@
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-keep (lambda (x) (and (evenp x) (* x 10))) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 20 40))
         (await completion :timeout 1)))))
 
@@ -71,7 +69,7 @@
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-filter (function evenp) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 2 4))
         (await completion :timeout 1)))))
 
@@ -81,7 +79,7 @@
       (dolist (x (list 1 1 2 2 2 3)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-distinct-until-changed input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 2 3))
         (await completion :timeout 1))))
 
@@ -91,7 +89,7 @@
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-distinct-until-changed input :key (function second) :test (function eql))
-        (expect (loop for value = (recv output :timeout 1) while value collect (first value))
+        (expect (mapcar (function first) (drain-channel output :timeout 1))
                 :to-equal (list :a :c))
         (await completion :timeout 1)))))
 
@@ -100,7 +98,7 @@
     (let ((input (make-channel :buffer-size 2)))
       (send input 1) (send input 2) (close-channel input)
       (multiple-value-bind (output completion) (channel-flat-map (lambda (x) (list x (* x 10))) input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 10 2 20))
         (await completion :timeout 1)))))
 
@@ -110,7 +108,7 @@
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-scan (function +) 0 input)
-        (expect (loop for value = (recv output :timeout 1) while value collect value)
+        (expect (drain-channel output :timeout 1)
                 :to-equal (list 1 3 6))
         (await completion :timeout 1)))))
 
@@ -283,19 +281,14 @@
     ;; queued and not yet claimed by a worker, when its SCOPE is cancelled.
     (let ((input (make-channel))
           (executor (make-executor :size 1))
-          (occupy-started (make-semaphore))
-          (occupy-release (make-semaphore)))
+          release)
       (unwind-protect
           (progn
-            (submit executor (lambda () (signal-semaphore occupy-started) (wait-on-semaphore occupy-release)))
-            (wait-or-fail occupy-started "occupying task did not start")
-            (handler-case
-                (with-task-scope (scope)
-                  (spawn scope (lambda () (error "boom")))
-                  (multiple-value-bind (output completion)
-                      (channel-map (function identity) input :scope scope :executor executor)
-                    (declare (ignore completion))
-                    (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)))
-              (scope-error () nil)))
-        (signal-semaphore occupy-release)
+            (setf release (occupy-worker executor))
+            (with-cancelled-scope (scope)
+              (multiple-value-bind (output completion)
+                  (channel-map (function identity) input :scope scope :executor executor)
+                (declare (ignore completion))
+                (expect (nth-value 1 (recv output :timeout 1)) :to-be nil))))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1)))))
