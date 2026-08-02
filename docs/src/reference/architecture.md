@@ -322,9 +322,16 @@ create one output channel of the requested buffer size, and return `(VALUES
 output completion-promise)` for a stage that closes the output on every exit
 path. `%WITH-CHANNEL-LIST-STAGE` is that setup/teardown written once; the
 three stages differ only in how they read from the validated input list and
-write to the output inside it. `%WORKER-LIMIT`, alongside it, is the one piece
-of arithmetic `CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED` both need --
-how many of `PARALLELISM` workers to actually start, bounded by an optional
+write to the output inside it.
+
+`CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED` live in their own file,
+`src/stream-map-concurrent.lisp`, rather than alongside the fan-in stages
+above: both read from exactly one `INPUT` channel and dispatch to a worker
+pool over their own private `JOBS`/`RESULTS` channels, never touching
+`%RUN-DYNAMIC-SELECT` or any other multi-input machinery, so grouping them
+with genuinely many-input stages would have been by proximity, not by
+shape. `%WORKER-LIMIT` is the one piece of arithmetic both need -- how many
+of `PARALLELISM` workers to actually start, bounded by an optional
 `EXECUTOR`'s own thread count and queue capacity -- named once rather than
 duplicated between them.
 

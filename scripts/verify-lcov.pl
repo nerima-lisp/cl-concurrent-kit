@@ -115,14 +115,13 @@ my %non_executable_da = map { $_ => 1 } qw(
   stream.lisp:154 stream.lisp:173 stream.lisp:227 stream.lisp:237 stream.lisp:262
   stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:38 stream-fan-out.lisp:61 stream-fan-out.lisp:77
   stream-fan-out.lisp:96
-  stream-fan-in.lisp:16 stream-fan-in.lisp:44 stream-fan-in.lisp:60 stream-fan-in.lisp:138 stream-fan-in.lisp:150
-  stream-fan-in.lisp:220 stream-fan-in.lisp:228 stream-fan-in.lisp:229 stream-fan-in.lisp:230 stream-fan-in.lisp:231
-  stream-fan-in.lisp:232 stream-fan-in.lisp:233 stream-fan-in.lisp:234 stream-fan-in.lisp:235 stream-fan-in.lisp:236
-  stream-fan-in.lisp:237 stream-fan-in.lisp:238 stream-fan-in.lisp:239 stream-fan-in.lisp:240 stream-fan-in.lisp:241
-  stream-fan-in.lisp:242 stream-fan-in.lisp:243 stream-fan-in.lisp:244 stream-fan-in.lisp:245 stream-fan-in.lisp:247
-  stream-fan-in.lisp:255 stream-fan-in.lisp:274 stream-fan-in.lisp:281 stream-fan-in.lisp:292 stream-fan-in.lisp:305
-  stream-fan-in.lisp:308 stream-fan-in.lisp:330 stream-fan-in.lisp:333 stream-fan-in.lisp:365 stream-fan-in.lisp:368
-  stream-fan-in.lisp:407
+  stream-fan-in.lisp:16 stream-fan-in.lisp:18 stream-fan-in.lisp:28 stream-fan-in.lisp:48 stream-fan-in.lisp:59
+  stream-fan-in.lisp:60 stream-fan-in.lisp:61 stream-fan-in.lisp:62 stream-fan-in.lisp:63 stream-fan-in.lisp:64
+  stream-fan-in.lisp:65 stream-fan-in.lisp:66 stream-fan-in.lisp:67 stream-fan-in.lisp:68 stream-fan-in.lisp:69
+  stream-fan-in.lisp:70 stream-fan-in.lisp:71 stream-fan-in.lisp:72 stream-fan-in.lisp:73 stream-fan-in.lisp:74
+  stream-fan-in.lisp:75 stream-fan-in.lisp:76 stream-fan-in.lisp:78 stream-fan-in.lisp:94 stream-fan-in.lisp:105
+  stream-fan-in.lisp:123 stream-fan-in.lisp:139 stream-fan-in.lisp:164 stream-fan-in.lisp:199 stream-fan-in.lisp:238
+  stream-map-concurrent.lisp:8 stream-map-concurrent.lisp:10 stream-map-concurrent.lisp:22 stream-map-concurrent.lisp:112 stream-map-concurrent.lisp:179
   stream-partition.lisp:6 stream-partition.lisp:8
 );
 my %seen_non_executable_da;

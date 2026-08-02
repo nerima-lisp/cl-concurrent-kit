@@ -79,6 +79,7 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "stream")
    (:file "stream-fan-out")
    (:file "stream-fan-in")
+   (:file "stream-map-concurrent")
    (:file "stream-partition"))
   :in-order-to ((test-op (test-op "cl-concurrent-kit/test"))))
 
