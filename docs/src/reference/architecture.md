@@ -24,24 +24,44 @@ dependency list: `cl-weave` for the test suite (`cl-concurrent-kit/test`'s
 own `:depends-on`, never `cl-concurrent-kit`'s) and `cl-nix-forge` for
 `flake.nix`'s packaging, neither reachable from a consumer that only loads
 the library. Adding a further nerima-lisp package as a *runtime* dependency
--- logging, for instance, for the one `(format *error-output* ...)` call in
+-- `cl-log-kit`, say, for the one `(format *error-output* ...)` call in
 `src/executor.lisp`'s worker loop -- would contradict that `:description`
 outright for a single call site, the textbook shape of the adapter this
 project's own instructions ask not to build.
+
+The rest of the org's catalog (checked against
+[github.com/orgs/nerima-lisp/repositories](https://github.com/orgs/nerima-lisp/repositories)
+as of v0.3.0) fares no better against that same test: `cl-json-kit`,
+`cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`, `cl-date-kit`,
+`cl-tty-kit`, and `cl-host-kit` all answer a data-format, text, or
+host-environment need this package -- concurrency primitives over
+`sb-thread` alone -- has no call site for at all; adopting one would be a
+dependency in search of a use, not a use in search of a dependency.
+`cl-boundary-kit` and `cl-dataflow` are the closest in *spirit* (explicit
+boundary/effect abstractions, composable computation graphs) but overlap
+this project's own domain closely enough that depending on either would
+mean wrapping their abstractions around this package's -- the adapter this
+architecture deliberately avoids -- rather than composing with them as a
+consumer. `cl-cc`, `nshell`, `loom`, and the `cl-cc-*` compiler-internals
+repositories are a different domain (a self-hosting compiler, a shell, a
+terminal editor) with no natural connection to this one at all.
 
 ## No backward-compatibility surface to eliminate
 
 A codebase carries backward-compatibility weight when a later API replaces
 an earlier one and both must keep working -- a deprecated alias, a
 compatibility shim, a `#+old-sbcl` branch preserved past its last caller.
-This one has never shipped a public release before the one in progress, so
-there is no earlier public surface for a later one to stay compatible with,
-and grepping the tree confirms it: zero matches across `src/`, `t/`, and the
-`.asd` for `deprecated`, `legacy`, `obsolete`, `backward-compat`, or `shim`,
-in any casing. The absence is the intended state, not a gap -- keep it that
-way by deleting rather than deprecating when a public symbol's shape
-changes, exactly as `cl-concurrent-kit.asd`'s `:version "0.3.0"` (no `1.x`
-compatibility promise yet) allows.
+Every release so far (v0.1.0 through v0.3.0) has changed public symbols'
+shapes outright rather than deprecating them -- `%CHANNEL-DEQUEUE` and the
+ring-buffer `CHANNEL`/`%WORK-QUEUE` internals replaced the FIFO-backed ones
+wholesale in v0.3.0, for instance, with no transitional alias kept alongside
+either. Grepping the tree confirms the result: zero matches across `src/`,
+`t/`, and the `.asd` for `deprecated`, `legacy`, `obsolete`, `backward-compat`,
+or `shim`, in any casing -- re-verified as part of the v0.3.0 refactor, not
+just inherited from an earlier audit. The absence is the intended state, not
+a gap -- keep it that way by deleting rather than deprecating when a public
+symbol's shape changes, exactly as `cl-concurrent-kit.asd`'s `:version
+"0.3.0"` (no `1.x` compatibility promise yet) allows.
 
 ## The CONDITION-WAIT timeout contract
 
@@ -388,6 +408,35 @@ callback-shaped conveniences on top of that blocking core instead -- a
 stage's worker thread still blocks on `RECV`, but the stage itself hands the
 caller a channel and a promise, the same non-blocking handle `PROMISE-THEN`
 would.
+
+## Where continuation-passing is used, and where it deliberately is not
+
+Collecting the continuation-passing shapes above in one place: `%OBSERVE-PROMISE`
+(`src/promise.lisp`) is the primitive one, a callback registered against a
+promise and invoked with its outcome by whichever thread settles it, never
+polled for. `PROMISE-THEN`/`PROMISE-CATCH`/`PROMISE-FINALLY` and every
+combinator in `src/promise-combinators.lisp` (`PROMISE-ALL`, `PROMISE-ANY`,
+`PROMISE-RACE`, `PROMISE-ALL-SETTLED`, `PROMISE-TIMEOUT`) are built on it
+directly, never on a thread, a queue, or a poll loop of their own. `SUBMIT`'s
+`:ON-SETTLE` (`src/executor.lisp`) is the same primitive reused for the
+executor's own bookkeeping (freeing a worker slot) rather than a public
+result. `%SCOPE-ADD-WAKER`/`%SCOPE-SET-CHILD-CANCEL`
+(`src/scope-state.lisp`) generalize it once more: a callback invoked on
+cancellation instead of settlement, so `AWAIT-LATCH`, `AWAIT-BARRIER`, and
+every stream stage's output-channel-closing waker (`src/stream.lisp`'s
+`%START-CHANNEL-STAGE`) all plug into the same one cancellation-dispatch
+point rather than each polling `CHECK-CANCELLED` on their own schedule.
+
+Where it is *not* used is exactly as deliberate: `src/channel.lisp`'s
+`SEND`/`RECV`, `src/select.lisp`'s `SELECT`, `src/latch.lisp`'s
+`AWAIT-LATCH`/`AWAIT-BARRIER`, and `src/primitives.lisp`'s `%WAIT-UNTIL` all
+block the calling thread rather than take a continuation, because each is
+modeling a real rendezvous or a real deadline a caller is waiting to observe
+directly -- turning any of them into a callback would change what a caller
+watching for completion is actually synchronizing with. See "The unbuffered
+channel is a real rendezvous" and "This continuation-passing composition is
+deliberately not how `src/channel.lisp`'s `SEND`/`RECV` work" above for the
+two places this project has already had to defend that line explicitly.
 
 ## Why SPEED 0, and why in the .asd rather than a DECLAIM
 
