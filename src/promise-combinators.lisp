@@ -58,6 +58,47 @@ aggregate promise."
                           (deliver aggregate (coerce settlements 'list))))))))))
     aggregate))
 
+(defmacro %unless-decided ((lock decided-place) &body body)
+  "Run BODY with LOCK held, but only if DECIDED-PLACE (a place shared by every
+observer racing the same promise combinator below) is not yet true; return
+NIL without running BODY at all once some other observer has already set it.
+
+BODY is responsible for setting DECIDED-PLACE itself, exactly when this
+observer has decided the race outright rather than merely recorded its own
+input -- PROMISE-ALL and PROMISE-ANY only set it once a completion count
+reaches zero, while PROMISE-RACE and PROMISE-TIMEOUT set it immediately (see
+%DECIDE-ONCE for that simpler shape). Doing the recording and the deciding in
+one BODY under one lock acquisition, rather than as two separate critical
+sections, is what keeps a value written by a losing observer from being
+recorded after a winner has already been delivered."
+  `(with-lock-held (,lock) (unless ,decided-place ,@body)))
+
+(defmacro %decide-once (lock decided-place)
+  "Claim DECIDED-PLACE for the calling observer if no other observer racing
+the same promise combinator has claimed it yet, returning T to whichever call
+does so first and NIL to every later one. The common case of
+%UNLESS-DECIDED where deciding needs no input of its own to record -- merely
+being called at all is enough to win."
+  `(%unless-decided (,lock ,decided-place) (setf ,decided-place t)))
+
+(defmacro %with-race-cleanup ((lock decided count promises observers) &body body)
+  "Establish DECIDED-P and STOP-OBSERVING-OTHERS as local functions for BODY,
+reaching LOCK, DECIDED, COUNT, PROMISES, and OBSERVERS by name from the
+caller's own lexical scope -- the anaphor is deliberate, the same shape
+%DEFINE-KIT-CONDITION's CONDITION already establishes for a :REPORT clause.
+DECIDED-P reads DECIDED under LOCK. STOP-OBSERVING-OTHERS (EXCEPT-INDEX)
+unregisters every observer in OBSERVERS from its own entry in PROMISES except
+the one at EXCEPT-INDEX -- the winning input, whose own observer a caller
+might still need to unregister separately once DECIDED-P is true. Shared by
+PROMISE-ALL and PROMISE-ANY below, which race COUNT promises identically and
+differ only in what a fulfilled or failed input means for each."
+  `(flet ((decided-p () (with-lock-held (,lock) ,decided))
+          (stop-observing-others (except-index)
+            (dotimes (i ,count)
+              (unless (= i except-index)
+                (%unobserve-promise (aref ,promises i) (aref ,observers i))))))
+     ,@body))
+
 (defun promise-race (promises)
   "Return a PROMISE that settles the same way -- fulfilled or failed -- as
 whichever PROMISE in PROMISES settles first. PROMISES must be non-empty.
@@ -79,9 +120,7 @@ result."
         (%observe-promise
          promise
          (lambda (state outcome)
-           (when (with-lock-held
-                     (lock)
-                   (unless decided (setf decided t)))
+           (when (%decide-once lock decided)
              (ecase state
                (:fulfilled (deliver winner outcome))
                (:failed (deliver-error winner outcome)))))))
@@ -167,34 +206,23 @@ NIL."
               (remaining count)
               (decided nil)
               (observers (make-array count :initial-element nil)))
-          (flet ((decided-p () (with-lock-held (lock) decided))
-                 (stop-observing-others (except-index)
-                   (dotimes (i count)
-                     (unless (= i except-index)
-                       (%unobserve-promise (aref promises i) (aref observers i))))))
+          (%with-race-cleanup (lock decided count promises observers)
             (dotimes (index count)
               (let* ((index index)
                      (observer
                        (lambda (state outcome)
                          (ecase state
                            (:fulfilled
-                            (let (done-p)
-                              (with-lock-held
-                                  (lock)
-                                (unless decided
-                                  (setf (aref values index) outcome)
-                                  (when (zerop (decf remaining))
-                                    (setf decided t done-p t))))
-                              (when done-p
-                                (%deliver-if-pending result (coerce values 'list)))))
+                            (when (%unless-decided (lock decided)
+                                    (setf (aref values index) outcome)
+                                    (let ((complete-p (zerop (decf remaining))))
+                                      (when complete-p (setf decided t))
+                                      complete-p))
+                              (%deliver-if-pending result (coerce values 'list))))
                            (:failed
-                            (let (won-p)
-                              (with-lock-held
-                                  (lock)
-                                (unless decided (setf decided t won-p t)))
-                              (when won-p
-                                (stop-observing-others index)
-                                (%deliver-error-if-pending result outcome))))))))
+                            (when (%decide-once lock decided)
+                              (stop-observing-others index)
+                              (%deliver-error-if-pending result outcome)))))))
                 (setf (aref observers index) observer)
                 (%observe-promise (aref promises index) observer)
                 (when (decided-p)
@@ -219,33 +247,22 @@ PROMISE-RACE -- if PROMISES is empty."
            (remaining count)
            (decided nil)
            (observers (make-array count :initial-element nil)))
-      (flet ((decided-p () (with-lock-held (lock) decided))
-             (stop-observing-others (except-index)
-               (dotimes (i count)
-                 (unless (= i except-index)
-                   (%unobserve-promise (aref promises i) (aref observers i))))))
+      (%with-race-cleanup (lock decided count promises observers)
         (dotimes (index count)
           (let* ((index index)
                  (observer
                    (lambda (state outcome)
                      (ecase state
                        (:fulfilled
-                        (let (won-p)
-                          (with-lock-held
-                              (lock)
-                            (unless decided (setf decided t won-p t)))
-                          (when won-p
-                            (stop-observing-others index)
-                            (%deliver-if-pending result outcome))))
+                        (when (%decide-once lock decided)
+                          (stop-observing-others index)
+                          (%deliver-if-pending result outcome)))
                        (:failed
-                        (let (causes)
-                          (with-lock-held
-                              (lock)
-                            (unless decided
-                              (setf (aref failures index) outcome)
-                              (when (zerop (decf remaining))
-                                (setf decided t
-                                      causes (coerce failures 'list)))))
+                        (let ((causes (%unless-decided (lock decided)
+                                        (setf (aref failures index) outcome)
+                                        (when (zerop (decf remaining))
+                                          (setf decided t)
+                                          (coerce failures 'list)))))
                           (when causes
                             (%deliver-error-if-pending
                              result
@@ -272,23 +289,19 @@ happens to finish on its own."
         (observer nil))
     (setf observer
           (lambda (state outcome)
-            (let (won-p)
-              (with-lock-held (lock) (unless decided (setf decided t won-p t)))
-              (when won-p
-                (signal-semaphore stop)
-                (ecase state
-                  (:fulfilled (%deliver-if-pending result outcome))
-                  (:failed (%deliver-error-if-pending result outcome)))))))
+            (when (%decide-once lock decided)
+              (signal-semaphore stop)
+              (ecase state
+                (:fulfilled (%deliver-if-pending result outcome))
+                (:failed (%deliver-error-if-pending result outcome))))))
     (%observe-promise promise observer)
     (make-thread
      (lambda ()
        (unless (wait-on-semaphore stop :timeout timeout)
-         (let (won-p)
-           (with-lock-held (lock) (unless decided (setf decided t won-p t)))
-           (when won-p
-             (%unobserve-promise promise observer)
-             (%deliver-error-if-pending
-              result
-              (make-condition 'operation-timed-out :operation :promise-timeout :timeout timeout))))))
+         (when (%decide-once lock decided)
+           (%unobserve-promise promise observer)
+           (%deliver-error-if-pending
+            result
+            (make-condition 'operation-timed-out :operation :promise-timeout :timeout timeout)))))
      :name "cl-concurrent-kit promise-timeout timer")
     result))

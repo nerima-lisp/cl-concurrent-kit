@@ -109,8 +109,7 @@
                                 (setf cancelled-observed-p t
                                       cancelled-scope (task-cancelled-scope condition))
                                 (return))))))
-          (unless (wait-on-semaphore ready :timeout 1)
-            (error "sibling task did not start"))
+          (wait-or-fail ready "sibling task did not start")
           (spawn scope (lambda () (error "sibling failure")))))
       (expect cancelled-observed-p :to-be-truthy)
       (expect (eq cancelled-scope scope-from-body) :to-be-truthy)))
@@ -207,30 +206,22 @@
                     (signal-semaphore started)
                     (wait-on-semaphore release)
                     (signal-semaphore finished)))
-                (unless (wait-on-semaphore started :timeout 1)
-                  (error "scope child did not start")))))
+                (wait-or-fail started "scope child did not start"))))
         (signal-semaphore release)
-        (unless (wait-on-semaphore finished :timeout 1)
-          (error "scope child did not finish"))))))
+        (wait-or-fail finished "scope child did not finish")))))
 
 (describe "scope executor integration"
   (it "settles a queued child when executor shutdown cancels it"
     (let ((executor (make-executor :size 1))
-          (started (make-semaphore))
-          (release (make-semaphore)))
+          release)
       (unwind-protect
           (progn
-            (submit executor
-                    (lambda ()
-                      (signal-semaphore started)
-                      (wait-on-semaphore release)))
-            (unless (wait-on-semaphore started :timeout 1)
-              (error "executor worker did not start"))
+            (setf release (occupy-worker executor))
             (signals scope-error
               (with-task-scope (scope)
                 (spawn scope (lambda () :never-runs) :executor executor)
                 (shutdown-executor executor :cancel-pending t))))
-        (signal-semaphore release)
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t))))
 
   (it "waits for an immediately rejected executor child before reporting failure"
@@ -275,17 +266,12 @@
 (describe "scope executor cancellation"
   (it "settles a queued child when executor shutdown removes it"
     (let ((executor (make-executor :size 1))
-          (started (make-semaphore))
-          (release (make-semaphore))
           (queued (make-semaphore))
-          (ran-p nil))
+          (ran-p nil)
+          release)
       (unwind-protect
           (progn
-            (submit executor
-                    (lambda ()
-                      (signal-semaphore started)
-                      (wait-on-semaphore release)))
-            (wait-or-fail started "executor worker did not start")
+            (setf release (occupy-worker executor))
             (let ((scope-result
                     (future
                       (handler-case
@@ -297,22 +283,17 @@
               (shutdown-executor executor :cancel-pending t)
               (expect (await scope-result :timeout 1) :to-be :scope-failed)
               (expect ran-p :to-be nil)))
-        (signal-semaphore release)
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t))))
   (it "cancels a still-queued executor child without re-recording its own cancellation as a failure"
     (let ((executor (make-executor :size 1))
-          (occupied (make-semaphore))
-          (release (make-semaphore))
           (queued (make-semaphore))
           (ran-p nil)
-          (body-error-observed-p nil))
+          (body-error-observed-p nil)
+          release)
       (unwind-protect
           (progn
-            (submit executor
-                    (lambda ()
-                      (signal-semaphore occupied)
-                      (wait-on-semaphore release)))
-            (wait-or-fail occupied "executor worker did not start")
+            (setf release (occupy-worker executor))
             (handler-case
                 (with-task-scope (scope)
                   (spawn scope (lambda () (setf ran-p t)) :executor executor)
@@ -322,7 +303,7 @@
               (simple-error () (setf body-error-observed-p t)))
             (expect body-error-observed-p :to-be-truthy)
             (expect ran-p :to-be nil))
-        (signal-semaphore release)
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t)))))
 
 (describe "scope cancellation outcomes"

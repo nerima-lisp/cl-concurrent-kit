@@ -41,6 +41,18 @@ probes via a private waiter semaphore rather than busy-polling."
       (dolist (clause clauses)
         (%channel-remove-waiter (car clause) waiter)))))
 
+(defun %worker-limit (parallelism executor)
+  "How many of CHANNEL-MAP-CONCURRENT/CHANNEL-MAP-UNORDERED's workers to
+start: PARALLELISM itself with no EXECUTOR, or PARALLELISM further bounded by
+EXECUTOR's own thread count and queue capacity (if bounded) -- starting more
+workers than EXECUTOR could ever run at once, or than its queue could ever
+hold pending, would only leave the extras permanently queued behind it."
+  (if executor
+      (min parallelism
+           (length (executor-threads executor))
+           (or (executor-queue-capacity executor) parallelism))
+      parallelism))
+
 (defun channel-map-concurrent (parallelism function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to INPUT concurrently across up to PARALLELISM workers,
 preserving input order in the output.
@@ -58,11 +70,7 @@ its own dispatcher."
          (jobs (make-channel :buffer-size parallelism))
          (results (make-channel :buffer-size parallelism))
          (worker-completions nil)
-         (worker-limit (if executor
-                            (min parallelism
-                                 (length (executor-threads executor))
-                                 (or (executor-queue-capacity executor) parallelism))
-                            parallelism)))
+         (worker-limit (%worker-limit parallelism executor)))
     (flet ((worker ()
              (loop
                (multiple-value-bind (job received-p) (recv jobs)
@@ -148,11 +156,7 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
          (jobs (make-channel :buffer-size parallelism))
          (results (make-channel :buffer-size parallelism))
          (worker-completions nil)
-         (worker-limit (if executor
-                            (min parallelism
-                                 (length (executor-threads executor))
-                                 (or (executor-queue-capacity executor) parallelism))
-                            parallelism)))
+         (worker-limit (%worker-limit parallelism executor)))
     (flet ((worker ()
              (loop
                (multiple-value-bind (value received-p) (recv jobs)
@@ -217,6 +221,25 @@ the caller can drop a closed channel from the next round's INPUTS."
                     (cons received-p input))))
           inputs))
 
+(defmacro %with-channel-list-stage ((inputs-var channels output-var buffer-size scope executor)
+                                     &body body)
+  "Validate CHANNELS as a list of CHANNEL values bound to INPUTS-VAR, create
+OUTPUT-VAR as a fresh channel of BUFFER-SIZE, and return (VALUES OUTPUT-VAR
+completion-promise) for a stage running BODY that closes OUTPUT-VAR on every
+exit path. Shared setup/teardown behind CHANNEL-MERGE, CHANNEL-ZIP, and
+CHANNEL-CONCAT below, which differ only in how they read from INPUTS-VAR and
+write to OUTPUT-VAR."
+  `(let ((,inputs-var (coerce ,channels 'list))
+         (,output-var (make-channel :buffer-size ,buffer-size)))
+     (dolist (input ,inputs-var) (check-type input channel))
+     (values
+      ,output-var
+      (%start-channel-stage
+       (lambda ()
+         (%with-closed-stage-outputs ((list ,output-var))
+           ,@body))
+       :scope ,scope :executor ,executor :outputs (list ,output-var)))))
+
 (defun channel-merge (channels &key (buffer-size 0) scope executor)
   "Forward values from CHANNELS to one output channel until every input has
 closed and drained.
@@ -226,20 +249,12 @@ each individual input preserve their receive order; values from different
 inputs are selected fairly and so have no fixed relative order. The output
 channel closes only once every input is closed and drained. With SCOPE, the
 stage is a tracked child; with EXECUTOR, it runs on that executor."
-  (let ((inputs (coerce channels 'list))
-        (output (make-channel :buffer-size buffer-size)))
-    (dolist (input inputs) (check-type input channel))
-    (values
-     output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (loop while inputs
-                do (when scope (check-cancelled scope))
-                   (let ((result (%run-dynamic-select (%channel-merge-clauses inputs output))))
-                     (unless (car result)
-                       (setf inputs (delete (cdr result) inputs :count 1)))))))
-      :scope scope :executor executor :outputs (list output)))))
+  (%with-channel-list-stage (inputs channels output buffer-size scope executor)
+    (loop while inputs
+          do (when scope (check-cancelled scope))
+             (let ((result (%run-dynamic-select (%channel-merge-clauses inputs output))))
+               (unless (car result)
+                 (setf inputs (delete (cdr result) inputs :count 1)))))))
 
 (defun %channel-zip-tuple (inputs)
   "Receive one value from every one of INPUTS, in order.
@@ -262,21 +277,13 @@ the shortest input -- and values already received toward an incomplete
 final tuple are consumed and discarded when a later input closes. With
 SCOPE, the stage is a tracked child; with EXECUTOR, it runs on that
 executor."
-  (let ((inputs (coerce channels 'list))
-        (output (make-channel :buffer-size buffer-size)))
-    (dolist (input inputs) (check-type input channel))
-    (values
-     output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (unless (null inputs)
-            (loop
-              (when scope (check-cancelled scope))
-              (multiple-value-bind (tuple complete-p) (%channel-zip-tuple inputs)
-                (unless complete-p (return))
-                (send output tuple))))))
-      :scope scope :executor executor :outputs (list output)))))
+  (%with-channel-list-stage (inputs channels output buffer-size scope executor)
+    (unless (null inputs)
+      (loop
+        (when scope (check-cancelled scope))
+        (multiple-value-bind (tuple complete-p) (%channel-zip-tuple inputs)
+          (unless complete-p (return))
+          (send output tuple))))))
 
 (defun channel-concat (channels &key (buffer-size 0) scope executor)
   "Forward CHANNELS one at a time, preserving both collection order and each
@@ -286,21 +293,13 @@ Returns two values: an output channel and a completion promise. The stage
 fully drains each channel before advancing to the next, and closes its
 output once the final input closes. With SCOPE, the stage is a tracked
 child; with EXECUTOR, it runs on that executor."
-  (let ((inputs (coerce channels 'list))
-        (output (make-channel :buffer-size buffer-size)))
-    (dolist (input inputs) (check-type input channel))
-    (values
-     output
-     (%start-channel-stage
-      (lambda ()
-        (%with-closed-stage-outputs ((list output))
-          (dolist (input inputs)
-            (loop
-              (when scope (check-cancelled scope))
-              (multiple-value-bind (value received-p) (recv input)
-                (unless received-p (return))
-                (send output value))))))
-      :scope scope :executor executor :outputs (list output)))))
+  (%with-channel-list-stage (inputs channels output buffer-size scope executor)
+    (dolist (input inputs)
+      (loop
+        (when scope (check-cancelled scope))
+        (multiple-value-bind (value received-p) (recv input)
+          (unless received-p (return))
+          (send output value))))))
 
 (defun channel-concat-map (function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to each INPUT value and fully drain each returned channel,

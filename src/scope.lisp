@@ -6,11 +6,19 @@
 ;;;; before it returns, and a failed task's condition always resurfaces
 ;;;; somewhere, instead of being silently dropped on a detached thread.
 ;;;;
-;;;; cl-concurrent-kit cannot forcibly interrupt a running SBCL thread, so
-;;;; cancellation here is cooperative: a scope trips a flag, and SPAWNed work
-;;;; must call CHECK-CANCELLED at points where stopping early is safe. See
-;;;; src/scope-state.lisp for TASK-SCOPE's own bookkeeping and
-;;;; src/scope-execution.lisp for SPAWN's dispatch.
+;;;; Cancellation here is COOPERATIVE: a scope trips a flag, and SPAWNed work
+;;;; must call CHECK-CANCELLED at points where stopping early is safe. That is
+;;;; a choice, not a missing mechanism -- src/timeout.lisp's WITH-TIMEOUT does
+;;;; forcibly interrupt a running SBCL thread, through a timer and
+;;;; SB-THREAD:INTERRUPT-THREAD, so the capability exists and is deliberately
+;;;; not used here. An asynchronous interrupt lands between two arbitrary
+;;;; instructions, which means it can unwind a task whose UNWIND-PROTECT has
+;;;; not yet recorded the resource its cleanup would release
+;;;; (SB-EXT:WITH-TIMEOUT's own docstring works that hazard through). A scope
+;;;; exists precisely to guarantee that every child it started has finished
+;;;; and been accounted for, and that guarantee is worth more than reclaiming
+;;;; a task a few moments earlier. See src/scope-state.lisp for TASK-SCOPE's
+;;;; own bookkeeping and src/scope-execution.lisp for SPAWN's dispatch.
 (in-package #:cl-concurrent-kit)
 
 (defmacro with-task-scope ((scope-var &key timeout) &body body)
@@ -22,7 +30,11 @@ guaranteed to have finished before WITH-TASK-SCOPE returns.
 
 TIMEOUT (seconds) bounds only the wait for already-running children once
 BODY itself has returned or signalled; on expiry every remaining child is
-cancelled cooperatively and OPERATION-TIMED-OUT is signaled.
+cancelled cooperatively and OPERATION-TIMED-OUT is signaled, naming
+:WITH-TASK-SCOPE as the operation. WITH-TIMEOUT signals that same condition
+type naming :WITH-TIMEOUT, so a handler around a scope whose BODY uses
+WITH-TIMEOUT must read OPERATION-TIMED-OUT-OPERATION to tell which of the two
+deadlines expired.
 
 If BODY itself signals, that condition propagates after every child has been
 cancelled and awaited; if BODY returns normally but one or more children

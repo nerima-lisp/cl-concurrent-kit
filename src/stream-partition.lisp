@@ -27,18 +27,13 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
                        (when group-p
                          (send output (nreverse group-reversed))
                          (setf group-reversed nil group-key nil group-p nil))))
-              (loop
-                (when scope (check-cancelled scope))
-                (multiple-value-bind (value received-p) (recv input)
-                  (unless received-p
-                    (flush-group)
-                    (return))
-                  (let ((value-key (funcall key value)))
-                    (if (and group-p (not (eql value-key group-key)))
-                        (progn
-                          (flush-group)
-                          (setf group-reversed (list value) group-key value-key group-p t))
-                        (progn
-                          (unless group-p (setf group-key value-key group-p t))
-                          (push value group-reversed))))))))))
+              (%consume-channel (value input scope (progn (flush-group) nil))
+                (let ((value-key (funcall key value)))
+                  (if (and group-p (not (eql value-key group-key)))
+                      (progn
+                        (flush-group)
+                        (setf group-reversed (list value) group-key value-key group-p t))
+                      (progn
+                        (unless group-p (setf group-key value-key group-p t))
+                        (push value group-reversed)))))))))
       :scope scope :executor executor :outputs (list output)))))

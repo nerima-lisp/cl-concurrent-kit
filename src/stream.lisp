@@ -273,6 +273,20 @@ closure, cancellation, and executor behavior are the same as CHANNEL-MAP."
        (setf accumulator (funcall function accumulator value))
        (values accumulator t)))))
 
+(defmacro %consume-channel ((value-var input scope on-close) &body body)
+  "Loop receiving successive values from INPUT into VALUE-VAR, checking
+SCOPE's cancellation before each one and running BODY once per value, until
+INPUT closes -- at which point the loop returns ON-CLOSE -- or BODY itself
+escapes early with (RETURN value). Shared LOOP/RECV/CHECK-CANCELLED skeleton
+behind CHANNEL-REDUCE, CHANNEL-COLLECT, CHANNEL-EACH, CHANNEL-SOME,
+CHANNEL-EVERY, and CHANNEL-FIND below, which differ only in what they
+accumulate along the way and what ON-CLOSE or an early BODY return should be."
+  `(loop
+     (when ,scope (check-cancelled ,scope))
+     (multiple-value-bind (,value-var received-p) (recv ,input)
+       (unless received-p (return ,on-close))
+       ,@body)))
+
 (defun channel-reduce (function initial-value input &key scope executor)
   "Reduce INPUT with FUNCTION (called with the previous accumulator and the
 next input value) and resolve to its final accumulator value.
@@ -282,14 +296,12 @@ accumulator once INPUT closes. With SCOPE, the reducer is a tracked child and
 a reducer failure cancels SCOPE; with EXECUTOR, it runs on that executor.
 Synchronous task-start failures are reported through the returned promise."
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (loop with accumulator = initial-value
-           do (when scope (check-cancelled scope))
-              (multiple-value-bind (value received-p) (recv input)
-                (unless received-p (return accumulator))
-                (setf accumulator (funcall function accumulator value)))))
-   :scope scope :executor executor))
+  (let ((accumulator initial-value))
+    (%start-channel-stage
+     (lambda ()
+       (%consume-channel (value input scope accumulator)
+         (setf accumulator (funcall function accumulator value))))
+     :scope scope :executor executor)))
 
 (defun channel-collect (input &key scope executor)
   "Collect INPUT into a promise for a list of its values in input order.
@@ -297,14 +309,12 @@ Synchronous task-start failures are reported through the returned promise."
 The promise resolves once INPUT closes, or rejects if INPUT, SCOPE, or
 EXECUTOR fails."
   (check-type input channel)
-  (%start-channel-stage
-   (lambda ()
-     (loop with reversed-values = nil
-           do (when scope (check-cancelled scope))
-              (multiple-value-bind (value received-p) (recv input)
-                (unless received-p (return (nreverse reversed-values)))
-                (push value reversed-values))))
-   :scope scope :executor executor))
+  (let (reversed-values)
+    (%start-channel-stage
+     (lambda ()
+       (%consume-channel (value input scope (nreverse reversed-values))
+         (push value reversed-values)))
+     :scope scope :executor executor)))
 
 (defun channel-each (function input &key scope executor)
   "Consume every value from INPUT with FUNCTION, in input order, and return
@@ -314,11 +324,8 @@ FUNCTION, INPUT, SCOPE, or EXECUTOR fails."
   (check-type input channel)
   (%start-channel-stage
    (lambda ()
-     (loop
-       (when scope (check-cancelled scope))
-       (multiple-value-bind (value received-p) (recv input)
-         (unless received-p (return nil))
-         (funcall function value))))
+     (%consume-channel (value input scope nil)
+       (funcall function value)))
    :scope scope :executor executor))
 
 (defun channel-some (predicate input &key scope executor)
@@ -329,12 +336,9 @@ closes without a match."
   (check-type input channel)
   (%start-channel-stage
    (lambda ()
-     (loop
-       (when scope (check-cancelled scope))
-       (multiple-value-bind (value received-p) (recv input)
-         (unless received-p (return nil))
-         (let ((result (funcall predicate value)))
-           (when result (return result))))))
+     (%consume-channel (value input scope nil)
+       (let ((result (funcall predicate value)))
+         (when result (return result)))))
    :scope scope :executor executor))
 
 (defun channel-every (predicate input &key scope executor)
@@ -345,11 +349,8 @@ later input values available."
   (check-type input channel)
   (%start-channel-stage
    (lambda ()
-     (loop
-       (when scope (check-cancelled scope))
-       (multiple-value-bind (value received-p) (recv input)
-         (unless received-p (return t))
-         (unless (funcall predicate value) (return nil)))))
+     (%consume-channel (value input scope t)
+       (unless (funcall predicate value) (return nil))))
    :scope scope :executor executor))
 
 (defun channel-find (predicate input &key scope executor)
@@ -360,9 +361,6 @@ closes without a match."
   (check-type input channel)
   (%start-channel-stage
    (lambda ()
-     (loop
-       (when scope (check-cancelled scope))
-       (multiple-value-bind (value received-p) (recv input)
-         (unless received-p (return nil))
-         (when (funcall predicate value) (return value)))))
+     (%consume-channel (value input scope nil)
+       (when (funcall predicate value) (return value))))
    :scope scope :executor executor))

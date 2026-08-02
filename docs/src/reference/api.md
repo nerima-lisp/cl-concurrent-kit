@@ -16,6 +16,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
+| `LOCK` | Type: what `MAKE-LOCK` returns and `WITH-LOCK-HELD` acquires. Declare a slot or variable with it -- `(or null cl-concurrent-kit:lock)` -- instead of naming `sb-thread:mutex`. |
 | `MAKE-LOCK` `(&key name)` | Create a mutex. |
 | `WITH-LOCK-HELD` `((lock) &body body)` | Hold `lock` for `body`'s dynamic extent. |
 | `MAKE-CONDITION-VARIABLE` `(&key name)` | Create a condition variable. |
@@ -33,6 +34,16 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 | `MAKE-ATOMIC-COUNTER` `(&optional initial-value)` | A lock-free non-negative counter. |
 | `ATOMIC-COUNTER-VALUE` `(counter)` | Current value. |
 | `ATOMIC-COUNTER-INCF` / `ATOMIC-COUNTER-DECF` `(counter &optional delta)` | Atomic add/subtract. |
+
+## Preemptive timeouts
+
+| Symbol | Description |
+|---|---|
+| `WITH-TIMEOUT` `(seconds &body body)` | Macro: run `body` under a deadline of `seconds` seconds, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `seconds` `NIL`, zero, or negative means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#preemptive-with-timeout-cooperative-scopes). |
+
+Note the shape of `seconds`: it is a bare form, as in `sb-ext:with-timeout`,
+not a one-element list as in `bordeaux-threads:with-timeout`. Write
+`(with-timeout 5 ...)`, not `(with-timeout (5) ...)`.
 
 ## Promises and futures
 
@@ -95,7 +106,7 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `TIMEOUT` (seconds) bounds only the wait for already-running children once the body itself has returned or signalled; on expiry every remaining child is cancelled cooperatively and `OPERATION-TIMED-OUT` is signaled. |
+| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `TIMEOUT` (seconds) bounds only the wait for already-running children once the body itself has returned or signalled; on expiry every remaining child is cancelled cooperatively and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TASK-SCOPE`. That is the same condition type `WITH-TIMEOUT` signals, so a handler around a scope whose body uses `WITH-TIMEOUT` must read `OPERATION-TIMED-OUT-OPERATION` to tell which deadline expired. |
 | `SPAWN` `(scope function &key executor)` | Start a tracked child task, return its `PROMISE`. With `EXECUTOR`, the child runs on that executor's worker pool instead of a dedicated thread. |
 | `CHECK-CANCELLED` `(scope)` | Signal `TASK-CANCELLED` if `scope` has been cancelled. |
 
@@ -167,7 +178,7 @@ contract (output ownership, closing, and completion promises).
 | Symbol | Base | Description |
 |---|---|---|
 | `CL-CONCURRENT-KIT-ERROR` | `ERROR` | Base condition for the whole library. |
-| `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, or scope cleanup, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
+| `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, scope cleanup, or a `WITH-TIMEOUT` body, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
 | `PROMISE-ALREADY-FULFILLED` | `CL-CONCURRENT-KIT-ERROR` | `DELIVER`/`DELIVER-ERROR`/`CANCEL-PROMISE` called on an already-settled promise. Reader: `PROMISE-ALREADY-FULFILLED-PROMISE`. |
 | `CHANNEL-CLOSED` | `CL-CONCURRENT-KIT-ERROR` | `SEND`/`TRY-SEND` after close. Reader: `CHANNEL-CLOSED-CHANNEL`. |
 | `EXECUTOR-SHUT-DOWN` | `CL-CONCURRENT-KIT-ERROR` | A submission was rejected or cancelled by executor shutdown, or an executor worker called `SHUTDOWN-EXECUTOR`/`AWAIT-EXECUTOR-TERMINATION` and therefore could not join itself. Reader: `EXECUTOR-SHUT-DOWN-EXECUTOR`. |

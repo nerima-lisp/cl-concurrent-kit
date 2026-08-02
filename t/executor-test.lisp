@@ -71,56 +71,31 @@
   (it
     "exposes the executor when cancellation rejects queued work"
     (let ((executor (make-executor :size 1))
-          (started (make-semaphore))
-          (release (make-semaphore))
-          (ran-p nil))
-      (unwind-protect (progn
-          (submit
-            executor
-            (lambda ()
-              (signal-semaphore started)
-              (wait-on-semaphore release)))
-          (unless (wait-on-semaphore started :timeout 1)
-            (error "executor worker did not start"))
-          (let ((result
-                (submit
-                  executor
-                  (lambda ()
-                    (setf ran-p t)))))
-            (shutdown-executor executor :cancel-pending t)
-            (handler-case (progn
-                (await result :timeout 1)
-                (error "cancelled task should have failed"))
-              (executor-shut-down (condition)
-                (expect (eq (executor-shut-down-executor condition) executor) :to-be-truthy)))
-            (expect ran-p :to-be nil)))
-        (signal-semaphore release)
+          (ran-p nil)
+          release)
+      (unwind-protect
+          (progn
+            (setf release (occupy-worker executor))
+            (let ((result (submit executor (lambda () (setf ran-p t)))))
+              (shutdown-executor executor :cancel-pending t)
+              (expect-signals (condition executor-shut-down) (await result :timeout 1) (expect (eq (executor-shut-down-executor condition) executor) :to-be-truthy))
+              (expect ran-p :to-be nil)))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t))))
   (it
     "rejects every task detached from the pending queue"
     (let ((executor (make-executor :size 1))
-          (started (make-semaphore))
-          (release (make-semaphore))
-          (ran 0))
-      (unwind-protect (progn
-          (submit
-            executor
-            (lambda ()
-              (signal-semaphore started)
-              (wait-on-semaphore release)))
-          (unless (wait-on-semaphore started :timeout 1)
-            (error "executor worker did not start"))
-          (let ((results
-                (loop repeat 8
-                      collect (submit
-                    executor
-                    (lambda ()
-                      (incf ran))))))
+          (ran 0)
+          release)
+      (unwind-protect
+          (let (results)
+            (setf release (occupy-worker executor))
+            (setf results (loop repeat 8 collect (submit executor (lambda () (incf ran)))))
             (shutdown-executor executor :cancel-pending t)
             (dolist (result results)
               (signals executor-shut-down (await result :timeout 1)))
-            (expect ran :to-be 0)))
-        (signal-semaphore release)
+            (expect ran :to-be 0))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t))))
   (it
     "settles submissions made after shutdown"
@@ -146,11 +121,7 @@
                 executor
                 (lambda ()
                   (shutdown-executor executor :wait t)))))
-          (handler-case (progn
-              (await result :timeout 1)
-              (error "worker shutdown should signal EXECUTOR-SHUT-DOWN"))
-            (executor-shut-down (condition)
-              (expect (eq (executor-shut-down-executor condition) executor) :to-be-truthy)))
+          (expect-signals (condition executor-shut-down) (await result :timeout 1) (expect (eq (executor-shut-down-executor condition) executor) :to-be-truthy))
           (shutdown-executor executor :wait t))
         (shutdown-executor executor :wait t)))))
 
@@ -169,8 +140,7 @@
                 (lambda ()
                   (signal-semaphore started)
                   (wait-on-semaphore release)))
-              (unless (wait-on-semaphore started :timeout 1)
-                (error "executor worker did not start"))
+              (wait-or-fail started "executor worker did not start")
               (let ((watched
                     (submit
                       executor
@@ -287,8 +257,7 @@
                 (signal-semaphore started)
                 (wait-on-semaphore release)
                 (signal-semaphore finished)))
-            (unless (wait-on-semaphore started :timeout 1)
-              (error "executor worker did not start"))
+            (wait-or-fail started "executor worker did not start")
             (signals operation-timed-out
               (shutdown-executor executor :wait t :timeout 0.01))
             (expect
@@ -296,8 +265,7 @@
                 (first (cl-concurrent-kit::executor-threads executor)))
               :to-be-truthy))
         (signal-semaphore release)
-        (unless (wait-on-semaphore finished :timeout 1)
-          (error "executor worker did not finish"))
+        (wait-or-fail finished "executor worker did not finish")
         (shutdown-executor executor :wait t :timeout 1)))))
 
 (describe "executor observability"
@@ -317,18 +285,17 @@
 
   (it "tracks EXECUTOR-QUEUE-DEPTH and EXECUTOR-HIGH-WATER-MARK as tasks queue and drain"
     (let ((executor (make-executor :size 1))
-          (release (make-semaphore))
-          (started (make-semaphore))
-          (queued (make-semaphore)))
+          (queued (make-semaphore))
+          release)
       (unwind-protect
           (progn
-            ;; Occupy the sole worker, and confirm it has actually claimed
-            ;; this task before submitting the next two -- otherwise all
-            ;; three could still be sitting in the queue together when a
-            ;; slow-to-schedule worker thread finally starts, making the
-            ;; peak depth below 3 rather than the 2 this asserts.
-            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
-            (wait-or-fail started "first task did not start")
+            ;; OCCUPY-WORKER's own confirmation that the sole worker has
+            ;; actually claimed this task matters here specifically: without
+            ;; it, all three tasks could still be sitting in the queue
+            ;; together when a slow-to-schedule worker thread finally
+            ;; starts, making the peak depth below 3 rather than the 2 this
+            ;; asserts.
+            (setf release (occupy-worker executor))
             (submit executor (lambda () (signal-semaphore queued)))
             (submit executor (lambda () (signal-semaphore queued)))
             (loop until (>= (executor-queue-depth executor) 2) do (sleep 0.001))
@@ -345,8 +312,10 @@
         ;; signal here is harmless once the happy path already consumed the
         ;; first one, but skipping it entirely would leave the worker
         ;; blocked forever and SHUTDOWN-EXECUTOR :WAIT T below hanging with
-        ;; it instead of reporting the real EXPECT failure.
-        (signal-semaphore release)
+        ;; it instead of reporting the real EXPECT failure. RELEASE can also
+        ;; still be NIL here, if OCCUPY-WORKER's own guard is what unwound
+        ;; this form.
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1)))))
 
 (describe "bounded executor queue"
@@ -358,44 +327,42 @@
 
   (it "rejects SUBMIT once the queue is full, settling the promise with EXECUTOR-QUEUE-FULL"
     (let ((executor (make-executor :size 1 :queue-capacity 1))
-          (release (make-semaphore))
-          (started (make-semaphore)))
+          release)
       (unwind-protect
           (progn
-            ;; See the TRY-SUBMIT test above for why this confirms the sole
-            ;; worker has claimed task1 before submitting task2.
-            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
-            (wait-or-fail started "first task did not start")
+            ;; See the TRY-SUBMIT test below for why OCCUPY-WORKER's own
+            ;; confirmation matters here: it is what stands between task1
+            ;; actually occupying the sole worker and merely being queued
+            ;; alongside task2.
+            (setf release (occupy-worker executor))
             (submit executor (lambda () nil))
             (loop until (= (executor-queue-depth executor) 1) do (sleep 0.001))
             (let ((rejected (submit executor (lambda () nil))))
-              (handler-case (progn (await rejected :timeout 1) (error "AWAIT should have signaled"))
-                (executor-queue-full (condition)
-                  (expect (eq (executor-queue-full-executor condition) executor) :to-be-truthy)
-                  (expect (executor-queue-full-capacity condition) :to-be 1)))))
-        (signal-semaphore release)
+              (expect-signals (condition executor-queue-full) (await rejected :timeout 1)
+                (expect (eq (executor-queue-full-executor condition) executor) :to-be-truthy)
+                (expect (executor-queue-full-capacity condition) :to-be 1))))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1))))
 
   (it "TRY-SUBMIT returns ACCEPTED-P false instead of a rejected promise's condition"
     (let ((executor (make-executor :size 1 :queue-capacity 1))
-          (release (make-semaphore))
-          (started (make-semaphore)))
+          release)
       (unwind-protect
           (progn
-            ;; Confirm the sole worker has actually claimed this task before
-            ;; submitting the next one -- otherwise that submission can lose
-            ;; the race for the one capacity slot task1 still occupies while
-            ;; merely queued (not yet claimed), get silently rejected, and
-            ;; leave nothing to ever bring EXECUTOR-QUEUE-DEPTH back to 1 for
-            ;; the unbounded loop below to observe.
-            (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
-            (wait-or-fail started "first task did not start")
+            ;; OCCUPY-WORKER's own confirmation that the sole worker has
+            ;; actually claimed task1 matters here specifically: without it,
+            ;; submitting task2 next could lose the race for the one
+            ;; capacity slot task1 still occupies while merely queued (not
+            ;; yet claimed), get silently rejected, and leave nothing to
+            ;; ever bring EXECUTOR-QUEUE-DEPTH back to 1 for the unbounded
+            ;; loop below to observe.
+            (setf release (occupy-worker executor))
             (submit executor (lambda () nil))
             (loop until (= (executor-queue-depth executor) 1) do (sleep 0.001))
             (multiple-value-bind (promise accepted-p) (try-submit executor (lambda () nil))
               (expect accepted-p :to-be nil)
               (signals executor-queue-full (await promise :timeout 1))))
-        (signal-semaphore release)
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1))))
 
   (it "TRY-SUBMIT returns ACCEPTED-P true when there is room"

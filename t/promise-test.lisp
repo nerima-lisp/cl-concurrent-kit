@@ -24,32 +24,20 @@
     (let ((promise (make-promise))
           (marker (make-condition (quote error))))
       (deliver-error promise marker)
-      (handler-case (progn
-          (await promise)
-          (error "AWAIT should have signaled"))
-        (error (c)
-          (expect (eq c marker) :to-be-truthy)))))
+      (expect-signals (c error) (await promise) (expect (eq c marker) :to-be-truthy))))
   (it
     "exposes the promise in PROMISE-ALREADY-FULFILLED"
     (let ((promise (make-promise)))
       (deliver promise 1)
-      (handler-case (progn
-          (deliver promise 2)
-          (error "DELIVER should have signaled"))
-        (promise-already-fulfilled (condition)
-          (expect
-            (eq (promise-already-fulfilled-promise condition) promise)
-            :to-be-truthy)))))
+      (expect-signals (condition promise-already-fulfilled) (deliver promise 2)
+        (expect (eq (promise-already-fulfilled-promise condition) promise) :to-be-truthy))))
   (it
     "exposes AWAIT timeout details"
     (let ((promise (make-promise))
           (timeout 0.05d0))
-      (handler-case (progn
-          (await promise :timeout timeout)
-          (error "AWAIT should have timed out"))
-        (operation-timed-out (condition)
-          (expect (operation-timed-out-operation condition) :to-be :await)
-          (expect (operation-timed-out-timeout condition) :to-be timeout)))))
+      (expect-signals (condition operation-timed-out) (await promise :timeout timeout)
+        (expect (operation-timed-out-operation condition) :to-be :await)
+        (expect (operation-timed-out-timeout condition) :to-be timeout))))
   (it
     "AWAIT blocks until another thread delivers, then returns"
     (let* ((promise (make-promise))
@@ -167,9 +155,7 @@
            (condition (make-condition 'error))
            (winner (promise-race (list first second))))
       (deliver-error first condition)
-      (handler-case
-          (progn (await winner :timeout 1) (error "AWAIT should have re-signaled"))
-        (error (c) (expect (eq c condition) :to-be-truthy)))))
+      (expect-signals (c error) (await winner :timeout 1) (expect (eq c condition) :to-be-truthy))))
 
   (it "discards settlements after the first winner without signaling"
     (let* ((first (make-promise))
@@ -209,9 +195,7 @@
           (condition (make-condition 'simple-error :format-control "boom")))
       (deliver-error promise condition)
       (let ((chained (promise-then promise (lambda (v) (declare (ignore v)) :wrong-branch))))
-        (handler-case
-            (progn (await chained) (error "AWAIT should have re-signaled"))
-          (error (c) (expect (eq c condition) :to-be-truthy))))))
+        (expect-signals (c error) (await chained) (expect (eq c condition) :to-be-truthy)))))
 
   (it "fails the returned promise when ON-FULFILLED itself signals"
     (let ((promise (make-promise)))
@@ -244,10 +228,9 @@
   (it "settles a pending promise as failed with PROMISE-CANCELLED"
     (let ((promise (make-promise)))
       (cancel-promise promise :because)
-      (handler-case (progn (await promise) (error "AWAIT should have signaled"))
-        (promise-cancelled (condition)
-          (expect (eq (promise-cancelled-promise condition) promise) :to-be-truthy)
-          (expect (promise-cancelled-reason condition) :to-be :because)))))
+      (expect-signals (condition promise-cancelled) (await promise)
+        (expect (eq (promise-cancelled-promise condition) promise) :to-be-truthy)
+        (expect (promise-cancelled-reason condition) :to-be :because))))
 
   (it "signals PROMISE-ALREADY-FULFILLED against an already-settled promise"
     (let ((promise (make-promise)))
@@ -288,8 +271,7 @@
           (ran-p nil))
       (deliver-error promise condition)
       (let ((chained (promise-finally promise (lambda () (setf ran-p t) :ignored))))
-        (handler-case (progn (await chained) (error "AWAIT should have re-signaled"))
-          (error (c) (expect (eq c condition) :to-be-truthy))))
+        (expect-signals (c error) (await chained) (expect (eq c condition) :to-be-truthy)))
       (expect ran-p :to-be-truthy)))
 
   (it "fails the result when FUNCTION itself signals, even for a fulfilled input"
@@ -316,8 +298,7 @@
            (condition (make-condition 'simple-error :format-control "boom"))
            (combined (promise-all (list never-settles failing))))
       (deliver-error failing condition)
-      (handler-case (progn (await combined :timeout 1) (error "AWAIT should have re-signaled"))
-        (error (c) (expect (eq c condition) :to-be-truthy)))))
+      (expect-signals (c error) (await combined :timeout 1) (expect (eq c condition) :to-be-truthy))))
 
   (it "unregisters an observer registered on a still-pending input after the outcome is already decided"
     (let* ((already-failed (make-promise))
@@ -329,8 +310,7 @@
       ;; ever registered.
       (deliver-error already-failed condition)
       (let ((combined (promise-all (list already-failed pending))))
-        (handler-case (progn (await combined :timeout 1) (error "AWAIT should have re-signaled"))
-          (error (c) (expect (eq c condition) :to-be-truthy)))
+        (expect-signals (c error) (await combined :timeout 1) (expect (eq c condition) :to-be-truthy))
         ;; PENDING's observer was unregistered as soon as it was registered,
         ;; since the outcome was already decided by ALREADY-FAILED --
         ;; delivering it now must not raise or otherwise disturb the
@@ -356,10 +336,9 @@
            (combined (promise-any (list first-input second-input))))
       (deliver-error first-input first-condition)
       (deliver-error second-input second-condition)
-      (handler-case (progn (await combined :timeout 1) (error "AWAIT should have signaled"))
-        (promise-all-failed (condition)
-          (expect (promise-all-failed-causes condition)
-                  :to-equal (list first-condition second-condition))))))
+      (expect-signals (condition promise-all-failed) (await combined :timeout 1)
+        (expect (promise-all-failed-causes condition)
+                :to-equal (list first-condition second-condition)))))
 
   (it "unregisters an observer registered on a still-pending input after the outcome is already decided"
     (let ((already-fulfilled (make-promise))
@@ -391,8 +370,7 @@
     (let ((promise (make-promise))
           (condition (make-condition 'simple-error :format-control "boom")))
       (deliver-error promise condition)
-      (handler-case (progn (await (promise-timeout promise 1) :timeout 1) (error "AWAIT should have re-signaled"))
-        (error (c) (expect (eq c condition) :to-be-truthy)))))
+      (expect-signals (c error) (await (promise-timeout promise 1) :timeout 1) (expect (eq c condition) :to-be-truthy))))
 
   (it "does not resettle the timed-out result when the source delivers late"
     (let ((promise (make-promise)))

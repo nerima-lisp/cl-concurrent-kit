@@ -17,6 +17,7 @@
    #:join-thread
 
    ;; Locks
+   #:lock
    #:make-lock
    #:with-lock-held
 
@@ -36,6 +37,9 @@
    #:atomic-counter-value
    #:atomic-counter-incf
    #:atomic-counter-decf
+
+   ;; Preemptive deadlines
+   #:with-timeout
 
    ;; Promises / futures
    #:make-promise
@@ -173,19 +177,13 @@
    #:executor-queue-full-executor
    #:executor-queue-full-capacity))
 
-;; SPEED 1 (SBCL's default) is what triggers this, confirmed by bisection: at
-;; SPEED 0 the whole system compiles in milliseconds; at SPEED 1 or above,
-;; SBCL 2.6.0's constraint-propagation pass on SRC/SCOPE.LISP's SPAWN-CHILD
-;; -- once SRC/SELECT.LISP, SRC/EXECUTOR.LISP, and SRC/SCOPE-STATE.LISP have
-;; all already contributed their own type information to the same image --
-;; does not return in any practical time. This lock-and-condition-variable
-;; coordination code is never the bottleneck a caller notices (the mutex
-;; acquisition and OS-level wait it wraps dominate every measurable cost by
-;; orders of magnitude), so trading SPEED for a compiler that terminates
-;; costs nothing real. Global, not local to one file: the pathology is
-;; triggered by type information SBCL already carried in from files compiled
-;; earlier in this same image, so a per-file declaim on SCOPE.LISP alone does
-;; not avoid it.
-(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))
+;; This file used to carry a global (DECLAIM (OPTIMIZE (SPEED 0) ...)) here.
+;; It has moved to cl-concurrent-kit.asd's :AROUND-COMPILE, whose comment
+;; records both why the policy exists and why a DECLAIM was the wrong place
+;; for it. Nothing replaces it here on purpose: a DECLAIM in this file is
+;; either too narrow (SBCL scopes an OPTIMIZE proclamation to the file being
+;; compiled or loaded, so it never reached the other sixteen) or, if it were
+;; not, too broad (it would still be in force for whatever a consumer compiles
+;; after loading us).
 
 (in-package #:cl-concurrent-kit)

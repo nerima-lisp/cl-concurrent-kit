@@ -37,13 +37,16 @@ CONDITION bound around them; REPORT-ARGS forms may refer to CONDITION freely
 
 (%define-kit-condition operation-timed-out
     ((operation "A keyword naming the operation that timed out, e.g. :AWAIT,
-:RECV, :SEND, :SELECT, or :WITH-TASK-SCOPE.")
+:RECV, :SEND, :SELECT, :WITH-TASK-SCOPE, or :WITH-TIMEOUT.")
      (timeout "The timeout, in seconds, that elapsed."))
   ("~S timed out after ~,3F seconds."
    (operation-timed-out-operation condition)
    (operation-timed-out-timeout condition))
   "Signaled by AWAIT, RECV, SEND, SELECT, or WITH-TASK-SCOPE when a :TIMEOUT
-argument elapses before the operation completes.")
+argument elapses before the operation completes, and by WITH-TIMEOUT when its
+body outlasts its deadline. The first group are waits this library implements
+itself and simply stops waiting on; WITH-TIMEOUT is the preemptive one, which
+interrupts an arbitrary body -- see src/timeout.lisp.")
 
 (%define-kit-condition promise-already-fulfilled
     ((promise "The promise DELIVER or DELIVER-ERROR was called on a second time."))

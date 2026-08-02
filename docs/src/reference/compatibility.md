@@ -68,7 +68,11 @@ top-level README.)
 - **Known limitation:** cancellation (`check-cancelled`, `with-task-scope`)
   is cooperative, not preemptive -- see
   [Architecture](architecture.md#structured-concurrency-why-the-bodys-own-error-is-never-wrapped)
-  for why cl-concurrent-kit cannot forcibly interrupt a running thread.
+  for why forcing it would cost the guarantee a scope exists to make. Where a
+  body really must be bounded whatever it is doing, `with-timeout` is the
+  preemptive escape hatch (it interrupts the thread outright), with the
+  asynchronous-unwind caveat that comes with one:
+  [Architecture](architecture.md#preemptive-with-timeout-cooperative-scopes).
 - **Scope:** single SBCL image only. Nothing here coordinates across OS
   processes or machines; `promise`/`channel`/`executor`/`task-scope` objects
   are not serializable and sharing one across images is not a supported use.

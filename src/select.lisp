@@ -10,8 +10,14 @@
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (let (#+sbcl (sb-ext:*evaluator-mode* :interpret))
-    (eval '(defun %expand-select (clauses)
-  "Wait on channel operations and execute the first ready clause directly."
+    (eval '(progn
+
+(defun %select-parse-clauses (clauses)
+  "Parse CLAUSES into (VALUES OPERATIONS DEFAULT-BODY DEFAULT-SEEN-P TIMEOUT),
+signaling if more than one :DEFAULT or :TIMEOUT clause is given, if both
+appear together, or if no channel operation clause is given at all. OPERATIONS
+is a list of (:RECV channel-form value-variable body) or (:SEND channel-form
+value-form body) entries, in clause order. TIMEOUT, if any, is (SECONDS . BODY)."
   (let ((operations nil)
         (default-body nil)
         (default-seen-p nil)
@@ -45,65 +51,84 @@
       (error "SELECT: at least one channel operation is required"))
     (when (and default-seen-p timeout)
       (error "SELECT: :DEFAULT and :TIMEOUT are mutually exclusive"))
-    (let* ((ordered (nreverse operations))
-           (waiter (gensym "WAITER"))
+    (values (nreverse operations) default-body default-seen-p timeout)))
+
+(defun %select-bindings (ordered-operations)
+  "Return one (OPERATION CHANNEL-GENSYM VALUE-GENSYM-OR-NIL) entry per operation
+in ORDERED-OPERATIONS: every operation needs a channel gensym to evaluate its
+channel-form exactly once, and a :SEND operation additionally needs a value
+gensym to evaluate its value-form exactly once."
+  (loop for operation in ordered-operations
+        collect (let ((channel (gensym "CHANNEL")))
+                  (ecase (first operation)
+                    (:recv (list operation channel nil))
+                    (:send (list operation channel (gensym "VALUE")))))))
+
+(defun %select-probe-forms (bindings block)
+  "Return one non-blocking probe form per entry in BINDINGS, each RETURN-FROM
+BLOCK with the matching clause body's value the instant its operation is
+ready. A :RECV probe fires on either an actual value or CHANNEL already
+closed-and-drained (TRY-RECV's own RECEIVED-P/CLOSED-P), binding the clause's
+value-variable, if any, only for an actual value. A :SEND probe fires the
+instant TRY-SEND succeeds."
+  (loop for binding in bindings
+        for operation = (first binding)
+        for channel = (second binding)
+        for value = (third binding)
+        collect
+        (ecase (first operation)
+          (:recv
+           (let ((variable (third operation))
+                 (body (fourth operation))
+                 (received (gensym "RECEIVED"))
+                 (closed (gensym "CLOSED"))
+                 (result (gensym "RESULT")))
+             `(multiple-value-bind (,result ,received ,closed)
+                  (try-recv ,channel)
+                (when (or ,received ,closed)
+                  (return-from ,block
+                    ,(if variable
+                         `(let ((,variable ,result)) ,@body)
+                         `(locally ,@body)))))))
+          (:send
+           (let ((body (fourth operation)))
+             `(when (try-send ,channel ,value)
+                (return-from ,block (locally ,@body))))))))
+
+(defun %expand-select (clauses)
+  "Wait on channel operations and execute the first ready clause directly."
+  (multiple-value-bind (ordered default-body default-seen-p timeout)
+      (%select-parse-clauses clauses)
+    (let* ((waiter (gensym "WAITER"))
            (deadline (gensym "DEADLINE"))
            (block (gensym "SELECT"))
-           (bindings
-            (loop for operation in ordered
-                  collect (let ((channel (gensym "CHANNEL")))
-                            (ecase (first operation)
-                              (:recv (list operation channel nil))
-                              (:send (list operation channel (gensym "VALUE")))))))
+           (bindings (%select-bindings ordered))
            (binding-forms
-            (loop for binding in bindings
-                  for operation = (first binding)
-                  for channel = (second binding)
-                  for value = (third binding)
-                  append (if value
-                             (list (list channel (second operation))
-                                   (list value (third operation)))
-                             (list (list channel (second operation))))))
+             (loop for binding in bindings
+                   for operation = (first binding)
+                   for channel = (second binding)
+                   for value = (third binding)
+                   append (if value
+                              (list (list channel (second operation))
+                                    (list value (third operation)))
+                              (list (list channel (second operation))))))
            (registration-forms
-            (loop for binding in bindings
-                  for operation = (first binding)
-                  for channel = (second binding)
-                  collect `(%channel-add-waiter
-                             ,channel
-                             ,waiter
-                             ,(if (eq (first operation) :recv)
-                                  +channel-notify-recv+
-                                  +channel-notify-send+))))
+             (loop for binding in bindings
+                   for operation = (first binding)
+                   for channel = (second binding)
+                   collect `(%channel-add-waiter
+                              ,channel
+                              ,waiter
+                              ,(if (eq (first operation) :recv)
+                                   +channel-notify-recv+
+                                   +channel-notify-send+))))
            (removal-forms
-            (loop for binding in bindings
-                  collect `(%channel-remove-waiter ,(second binding) ,waiter)))
-           (probe-forms
-            (loop for binding in bindings
-                  for operation = (first binding)
-                  for channel = (second binding)
-                  for value = (third binding)
-                  collect
-                  (ecase (first operation)
-                    (:recv
-                     (let ((variable (third operation))
-                           (body (fourth operation))
-                           (received (gensym "RECEIVED"))
-                           (closed (gensym "CLOSED"))
-                           (result (gensym "RESULT")))
-                       `(multiple-value-bind (,result ,received ,closed)
-                             (try-recv ,channel)
-                           (when (or ,received ,closed)
-                             (return-from ,block
-                               ,(if variable
-                                    `(let ((,variable ,result)) ,@body)
-                                    `(locally ,@body)))))))
-                    (:send
-                     (let ((body (fourth operation)))
-                       `(when (try-send ,channel ,value)
-                          (return-from ,block (locally ,@body)))))))))
+             (loop for binding in bindings
+                   collect `(%channel-remove-waiter ,(second binding) ,waiter)))
+           (probe-forms (%select-probe-forms bindings block)))
       `(let* (,@binding-forms
-               (,waiter (make-semaphore))
-               (,deadline ,(when timeout `(%deadline-from-timeout ,(car timeout)))))
+              (,waiter (make-semaphore))
+              (,deadline ,(when timeout `(%deadline-from-timeout ,(car timeout)))))
          (block ,block
            (unwind-protect
                 (progn
@@ -113,15 +138,12 @@
                     ,(when default-seen-p `(return-from ,block (locally ,@default-body)))
                     ,(if timeout
                          `(let ((remaining
-                                  (and ,deadline
-                                       (max 0.0d0
-                                            (/ (- ,deadline (get-internal-real-time))
-                                               (float internal-time-units-per-second 0.0d0))))))
+                                  (and ,deadline (%seconds-until-deadline ,deadline))))
                             (if (and remaining (zerop remaining))
                                 (return-from ,block (locally ,@(cdr timeout)))
                                 (wait-on-semaphore ,waiter :timeout remaining)))
                          `(wait-on-semaphore ,waiter))))
-             ,@removal-forms)))))))))
+             ,@removal-forms))))))))))
 
 (defmacro select (&body clauses)
   "Wait on multiple channel operations, running the body of whichever becomes

@@ -139,10 +139,7 @@ never exit for this to observe."
         (timeout-marker (gensym "JOIN-TIMEOUT-")))
     (dolist (thread (executor-threads executor))
       (if deadline
-          (let ((remaining
-                  (max 0.0d0
-                       (/ (- deadline (get-internal-real-time))
-                          (float internal-time-units-per-second 0.0d0)))))
+          (let ((remaining (%seconds-until-deadline deadline)))
             (let ((result (join-thread thread :default timeout-marker :timeout remaining)))
               (when (and (eq result timeout-marker) (thread-alive-p thread))
                 (error 'operation-timed-out

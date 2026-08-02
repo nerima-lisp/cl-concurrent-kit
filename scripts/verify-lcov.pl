@@ -34,7 +34,8 @@ my %non_executable_da = map { $_ => 1 } qw(
   conditions.lisp:26 conditions.lisp:27 conditions.lisp:28 conditions.lisp:29 conditions.lisp:30
   conditions.lisp:31 conditions.lisp:32 conditions.lisp:33 conditions.lisp:34 conditions.lisp:35
   conditions.lisp:36
-  primitives.lisp:9 primitives.lisp:30 primitives.lisp:73 primitives.lisp:95 primitives.lisp:141
+  primitives.lisp:9 primitives.lisp:30 primitives.lisp:81 primitives.lisp:103 primitives.lisp:161
+  timeout.lisp:18
   fifo.lisp:12 fifo.lisp:15 fifo.lisp:16 fifo.lisp:17 fifo.lisp:18
   fifo.lisp:21 fifo.lisp:22
   latch.lisp:11 latch.lisp:16 latch.lisp:17 latch.lisp:18 latch.lisp:19
@@ -57,43 +58,47 @@ my %non_executable_da = map { $_ => 1 } qw(
   channel.lisp:83 channel.lisp:84 channel.lisp:85 channel.lisp:86 channel.lisp:87
   channel.lisp:88 channel.lisp:89 channel.lisp:90 channel.lisp:91 channel.lisp:92
   channel.lisp:93 channel.lisp:94 channel.lisp:95 channel.lisp:96 channel.lisp:97
-  select.lisp:9 select.lisp:12 select.lisp:13 select.lisp:14 select.lisp:15
-  select.lisp:16 select.lisp:17 select.lisp:18 select.lisp:19 select.lisp:20
-  select.lisp:21 select.lisp:22 select.lisp:23 select.lisp:24 select.lisp:25
-  select.lisp:26 select.lisp:27 select.lisp:28 select.lisp:29 select.lisp:30
-  select.lisp:31 select.lisp:32 select.lisp:33 select.lisp:34 select.lisp:35
-  select.lisp:36 select.lisp:37 select.lisp:38 select.lisp:39 select.lisp:40
-  select.lisp:41 select.lisp:42 select.lisp:43 select.lisp:44 select.lisp:45
-  select.lisp:46 select.lisp:47 select.lisp:48 select.lisp:49 select.lisp:50
-  select.lisp:51 select.lisp:52 select.lisp:53 select.lisp:54 select.lisp:55
-  select.lisp:56 select.lisp:57 select.lisp:58 select.lisp:59 select.lisp:60
-  select.lisp:61 select.lisp:62 select.lisp:63 select.lisp:64 select.lisp:65
-  select.lisp:66 select.lisp:67 select.lisp:68 select.lisp:69 select.lisp:70
-  select.lisp:71 select.lisp:72 select.lisp:73 select.lisp:74 select.lisp:75
-  select.lisp:76 select.lisp:77 select.lisp:78 select.lisp:79 select.lisp:80
-  select.lisp:81 select.lisp:82 select.lisp:83 select.lisp:84 select.lisp:85
-  select.lisp:86 select.lisp:87 select.lisp:88 select.lisp:89 select.lisp:90
-  select.lisp:91 select.lisp:92 select.lisp:93 select.lisp:94 select.lisp:95
-  select.lisp:96 select.lisp:97 select.lisp:98 select.lisp:99 select.lisp:100
-  select.lisp:101 select.lisp:102 select.lisp:103 select.lisp:104 select.lisp:105
-  select.lisp:106 select.lisp:107 select.lisp:108 select.lisp:109 select.lisp:110
-  select.lisp:111 select.lisp:112 select.lisp:113 select.lisp:114 select.lisp:115
-  select.lisp:116 select.lisp:117 select.lisp:118 select.lisp:119 select.lisp:120
-  select.lisp:121 select.lisp:122 select.lisp:123 select.lisp:124
+  select.lisp:9 select.lisp:12 select.lisp:13 select.lisp:15 select.lisp:16
+  select.lisp:17 select.lisp:18 select.lisp:19 select.lisp:20 select.lisp:21
+  select.lisp:22 select.lisp:23 select.lisp:24 select.lisp:25 select.lisp:26
+  select.lisp:27 select.lisp:28 select.lisp:29 select.lisp:30 select.lisp:31
+  select.lisp:32 select.lisp:33 select.lisp:34 select.lisp:35 select.lisp:36
+  select.lisp:37 select.lisp:38 select.lisp:39 select.lisp:40 select.lisp:41
+  select.lisp:42 select.lisp:43 select.lisp:44 select.lisp:45 select.lisp:46
+  select.lisp:47 select.lisp:48 select.lisp:49 select.lisp:50 select.lisp:51
+  select.lisp:52 select.lisp:53 select.lisp:54 select.lisp:56 select.lisp:57
+  select.lisp:58 select.lisp:59 select.lisp:60 select.lisp:61 select.lisp:62
+  select.lisp:63 select.lisp:64 select.lisp:65 select.lisp:67 select.lisp:68
+  select.lisp:69 select.lisp:70 select.lisp:71 select.lisp:72 select.lisp:73
+  select.lisp:74 select.lisp:75 select.lisp:76 select.lisp:77 select.lisp:78
+  select.lisp:79 select.lisp:80 select.lisp:81 select.lisp:82 select.lisp:83
+  select.lisp:84 select.lisp:85 select.lisp:86 select.lisp:87 select.lisp:88
+  select.lisp:89 select.lisp:90 select.lisp:91 select.lisp:92 select.lisp:93
+  select.lisp:94 select.lisp:95 select.lisp:96 select.lisp:98 select.lisp:99
+  select.lisp:100 select.lisp:101 select.lisp:102 select.lisp:103 select.lisp:104
+  select.lisp:105 select.lisp:106 select.lisp:107 select.lisp:108 select.lisp:109
+  select.lisp:110 select.lisp:111 select.lisp:112 select.lisp:113 select.lisp:114
+  select.lisp:115 select.lisp:116 select.lisp:117 select.lisp:118 select.lisp:119
+  select.lisp:120 select.lisp:121 select.lisp:122 select.lisp:123 select.lisp:124
+  select.lisp:125 select.lisp:126 select.lisp:127 select.lisp:128 select.lisp:129
+  select.lisp:130 select.lisp:131 select.lisp:132 select.lisp:133 select.lisp:134
+  select.lisp:135 select.lisp:136 select.lisp:137 select.lisp:138 select.lisp:139
+  select.lisp:140 select.lisp:141 select.lisp:142 select.lisp:143 select.lisp:144
+  select.lisp:145 select.lisp:146
   executor.lisp:6 executor.lisp:14 executor.lisp:15 executor.lisp:16 executor.lisp:17
   executor.lisp:20 executor.lisp:21 executor.lisp:22 executor.lisp:23 executor.lisp:25
   executor.lisp:26 executor.lisp:27 executor.lisp:65 executor.lisp:66 executor.lisp:67
-  executor.lisp:68 executor.lisp:200 executor.lisp:223 executor.lisp:224 executor.lisp:225
-  executor.lisp:226
+  executor.lisp:68 executor.lisp:197 executor.lisp:220 executor.lisp:221 executor.lisp:222
+  executor.lisp:223
   scope-state.lisp:10 scope-state.lisp:13 scope-state.lisp:16 scope-state.lisp:17 scope-state.lisp:20
   scope-state.lisp:28 scope-state.lisp:34 scope-state.lisp:35 scope-state.lisp:37
   scope-state.lisp:40 scope-state.lisp:42 scope-state.lisp:43 scope-state.lisp:44
   scope-execution.lisp:8
-  scope.lisp:14
+  scope.lisp:22
   stream.lisp:15 stream.lisp:115 stream.lisp:123 stream.lisp:134 stream.lisp:145
   stream.lisp:154 stream.lisp:173 stream.lisp:227 stream.lisp:237 stream.lisp:262
-  stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:41 stream-fan-out.lisp:64
-  stream-fan-out.lisp:80 stream-fan-out.lisp:102
+  stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:38 stream-fan-out.lisp:61
+  stream-fan-out.lisp:77 stream-fan-out.lisp:96
   stream-fan-in.lisp:16 stream-fan-in.lisp:44 stream-fan-in.lisp:138 stream-fan-in.lisp:220
   stream-fan-in.lisp:255 stream-fan-in.lisp:281 stream-fan-in.lisp:305 stream-fan-in.lisp:330
   stream-fan-in.lisp:365

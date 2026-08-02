@@ -163,6 +163,25 @@ if CHANNEL is already closed."
           (error 'operation-timed-out :operation :send :timeout timeout)))))
   t)
 
+(defun %channel-dequeue (channel)
+  "Pop CHANNEL's next queued entry, update COUNT and an unbuffered entry's
+RECEIVED-P, and notify whichever waiters that transition unblocks, then
+return the value itself (unwrapped from its %CHANNEL-MESSAGE if CHANNEL is
+unbuffered). Shared by RECV and TRY-RECV below, which differ only in how they
+wait for something to dequeue in the first place and how many further values
+they wrap around this one -- CHANNEL must already have a value available
+(COUNT plusp) under CHANNEL's own lock; neither caller calls this otherwise."
+  (let* ((entry (fifo-pop (channel-queue channel)))
+         (unbuffered-p (zerop (channel-buffer-size channel))))
+    (decf (channel-count channel))
+    (when unbuffered-p
+      (setf (%channel-message-received-p entry) t))
+    (%channel-notify channel
+                      (if unbuffered-p
+                          (logior +channel-notify-send+ +channel-notify-rendezvous+)
+                          +channel-notify-send+))
+    (if unbuffered-p (%channel-message-value entry) entry)))
+
 (defun recv (channel &key timeout)
   "Receive a value from CHANNEL, blocking until one is available or CHANNEL
 is closed. Returns (VALUES VALUE T), or (VALUES NIL NIL) once CHANNEL is
@@ -176,17 +195,7 @@ closed and every value sent before the close has been drained. With TIMEOUT
           ((channel-closed-p channel) :closed))
       (case ready
         (:closed (values nil nil))
-        (:ready
-         (let* ((entry (fifo-pop (channel-queue channel)))
-                (unbuffered-p (zerop (channel-buffer-size channel))))
-           (decf (channel-count channel))
-           (when unbuffered-p
-             (setf (%channel-message-received-p entry) t))
-           (%channel-notify channel
-                             (if unbuffered-p
-                                 (logior +channel-notify-send+ +channel-notify-rendezvous+)
-                                 +channel-notify-send+))
-           (values (if unbuffered-p (%channel-message-value entry) entry) t)))))))
+        (:ready (values (%channel-dequeue channel) t))))))
 
 (defun try-send (channel value)
   "Non-blocking SEND: deposit VALUE and return T if room is immediately
@@ -213,17 +222,7 @@ buffered value has been drained, or (VALUES NIL NIL NIL) if nothing is
 available right now but CHANNEL may still produce more."
   (%with-channel-lock (channel)
     (cond
-      ((plusp (channel-count channel))
-       (let* ((entry (fifo-pop (channel-queue channel)))
-              (unbuffered-p (zerop (channel-buffer-size channel))))
-         (decf (channel-count channel))
-         (when unbuffered-p
-           (setf (%channel-message-received-p entry) t))
-         (%channel-notify channel
-                           (if unbuffered-p
-                               (logior +channel-notify-send+ +channel-notify-rendezvous+)
-                               +channel-notify-send+))
-         (values (if unbuffered-p (%channel-message-value entry) entry) t nil)))
+      ((plusp (channel-count channel)) (values (%channel-dequeue channel) t nil))
       ((channel-closed-p channel) (values nil nil t))
       (t (values nil nil nil)))))
 

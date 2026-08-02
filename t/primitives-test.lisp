@@ -65,6 +65,26 @@
         (mapc #'join-thread threads))
       (expect counter :to-be 8000))))
 
+(describe "the LOCK type"
+  (it "is the type MAKE-LOCK returns"
+    (expect (typep (make-lock) 'lock) :to-be-truthy))
+
+  (it "is the type a named lock has too"
+    (expect (typep (make-lock :name "cl-concurrent-kit lock type test") 'lock) :to-be-truthy))
+
+  (it "rejects objects that are not locks"
+    (expect (typep nil 'lock) :to-be nil)
+    (expect (typep (make-semaphore) 'lock) :to-be nil)
+    (expect (typep (make-condition-variable) 'lock) :to-be nil))
+
+  (it "is usable in the DEFSTRUCT slot declaration consumers need it for"
+    ;; The shape a consumer's optional-lock slot wants: declared without the
+    ;; consumer naming SB-THREAD.
+    (let ((slot-type '(or null lock)))
+      (expect (typep (make-lock) slot-type) :to-be-truthy)
+      (expect (typep nil slot-type) :to-be-truthy)
+      (expect (typep :not-a-lock slot-type) :to-be nil))))
+
 (describe
   "condition variables"
   (it

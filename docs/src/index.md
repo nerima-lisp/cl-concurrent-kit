@@ -32,9 +32,14 @@ cl-concurrent-kit is five layers, each built only on the ones below it:
    `:TIMEOUT` has elapsed) before the scope returns, and that a failed
    task's condition always resurfaces.
 
-Two further pieces build on those five rather than adding a strictly new
+Three further pieces build on those five rather than adding a strictly new
 layer of their own:
 
+- **Preemptive timeouts** (`src/timeout.lisp`) -- `WITH-TIMEOUT`, the one
+  deadline here that bounds an *arbitrary* body rather than a wait this
+  library implements itself, by interrupting the running thread. The
+  counterpart to structured concurrency's deliberately cooperative
+  cancellation, not a replacement for it.
 - **Countdown latches and barriers** (`src/latch.lisp`) -- `COUNTDOWN-LATCH`
   and `BARRIER`, both able to take an optional `WITH-TASK-SCOPE` `:SCOPE` so
   a blocked wait unblocks on cancellation the same way `AWAIT` does.

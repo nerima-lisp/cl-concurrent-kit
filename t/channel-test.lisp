@@ -50,12 +50,9 @@
     (it
       "reports the RECV timeout without leaving a pending operation"
       (let ((channel (make-channel)))
-        (handler-case (progn
-            (recv channel :timeout 0.05d0)
-            (error "RECV should have timed out"))
-          (operation-timed-out (condition)
-            (expect (operation-timed-out-operation condition) :to-be :recv)
-            (expect (operation-timed-out-timeout condition) :to-be 0.05d0)))))))
+        (expect-signals (condition operation-timed-out) (recv channel :timeout 0.05d0)
+          (expect (operation-timed-out-operation condition) :to-be :recv)
+          (expect (operation-timed-out-timeout condition) :to-be 0.05d0))))))
 
 (describe
   "buffered channel"
@@ -90,12 +87,9 @@
     "reports the SEND timeout while the buffered channel remains full"
     (let ((channel (make-channel :buffer-size 1)))
       (send channel :first)
-      (handler-case (progn
-                      (send channel :second :timeout 0.05d0)
-                      (error "SEND should have timed out"))
-        (operation-timed-out (condition)
-          (expect (operation-timed-out-operation condition) :to-be :send)
-          (expect (operation-timed-out-timeout condition) :to-be 0.05d0)))
+      (expect-signals (condition operation-timed-out) (send channel :second :timeout 0.05d0)
+        (expect (operation-timed-out-operation condition) :to-be :send)
+        (expect (operation-timed-out-timeout condition) :to-be 0.05d0))
       (expect (recv channel) :to-be :first))))
 
 (describe
@@ -133,11 +127,7 @@
   (it "signals CHANNEL-CLOSED on SEND or TRY-SEND after close"
     (let ((channel (make-channel)))
       (close-channel channel)
-      (handler-case (progn
-          (send channel :too-late)
-          (error "SEND should have signaled"))
-        (channel-closed (condition)
-          (expect (eq (channel-closed-channel condition) channel) :to-be-truthy)))
+      (expect-signals (condition channel-closed) (send channel :too-late) (expect (eq (channel-closed-channel condition) channel) :to-be-truthy))
       (signals channel-closed (try-send channel :too-late))))
   (it
     "is idempotent"

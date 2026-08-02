@@ -28,14 +28,11 @@ is a tracked child; with EXECUTOR, it runs on that executor."
       (lambda ()
         (let ((active-outputs outputs))
           (%with-closed-stage-outputs (outputs)
-            (loop
-              (when scope (check-cancelled scope))
-              (multiple-value-bind (value received-p) (recv input)
-                (unless received-p (return))
-                (dolist (output active-outputs)
-                  (handler-case (send output value)
-                    (channel-closed ()
-                      (setf active-outputs (remove output active-outputs :count 1))))))))))
+            (%consume-channel (value input scope nil)
+              (dolist (output active-outputs)
+                (handler-case (send output value)
+                  (channel-closed ()
+                    (setf active-outputs (remove output active-outputs :count 1)))))))))
       :scope scope :executor executor :outputs outputs))))
 
 (defun channel-take (count input &key (buffer-size 0) scope executor)
@@ -48,17 +45,17 @@ remain available to another receiver. With SCOPE, the stage is a tracked
 child; with EXECUTOR, it runs on that executor."
   (check-type count (integer 0 *))
   (check-type input channel)
-  (let ((output (make-channel :buffer-size buffer-size)))
+  (let ((output (make-channel :buffer-size buffer-size))
+        (remaining count))
     (values
      output
      (%start-channel-stage
       (lambda ()
         (%with-closed-stage-outputs ((list output))
-          (loop repeat count
-                do (when scope (check-cancelled scope))
-                   (multiple-value-bind (value received-p) (recv input)
-                     (unless received-p (return))
-                     (send output value)))))
+          (when (plusp remaining)
+            (%consume-channel (value input scope nil)
+              (send output value)
+              (when (zerop (decf remaining)) (return))))))
       :scope scope :executor executor :outputs (list output)))))
 
 (defun channel-drop (count input &key (buffer-size 0) scope executor)
@@ -91,12 +88,9 @@ stage is a tracked child; with EXECUTOR, it runs on that executor."
      (%start-channel-stage
       (lambda ()
         (%with-closed-stage-outputs ((list output))
-          (loop
-            (when scope (check-cancelled scope))
-            (multiple-value-bind (value received-p) (recv input)
-              (unless received-p (return))
-              (unless (funcall predicate value) (return))
-              (send output value)))))
+          (%consume-channel (value input scope nil)
+            (unless (funcall predicate value) (return))
+            (send output value))))
       :scope scope :executor executor :outputs (list output)))))
 
 (defun channel-batch (size input &key (buffer-size 0) (emit-partial t) scope executor)
@@ -117,16 +111,14 @@ on that executor."
         (%with-closed-stage-outputs ((list output))
           (let ((batch nil)
                 (batch-size 0))
-            (loop
-              (when scope (check-cancelled scope))
-              (multiple-value-bind (value received-p) (recv input)
-                (unless received-p (return))
-                (push value batch)
-                (incf batch-size)
-                (when (= batch-size size)
-                  (send output (nreverse batch))
-                  (setf batch nil batch-size 0))))
-            (when (and batch emit-partial)
-              (send output (nreverse batch)))
-            nil)))
+            (%consume-channel (value input scope
+                                (progn
+                                  (when (and batch emit-partial)
+                                    (send output (nreverse batch)))
+                                  nil))
+              (push value batch)
+              (incf batch-size)
+              (when (= batch-size size)
+                (send output (nreverse batch))
+                (setf batch nil batch-size 0))))))
       :scope scope :executor executor :outputs (list output)))))

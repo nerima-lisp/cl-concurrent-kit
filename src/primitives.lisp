@@ -35,6 +35,14 @@ return DEFAULT when supplied; otherwise signal SB-THREAD:JOIN-THREAD-ERROR."
     (sb-thread:join-thread thread :timeout timeout)))
 
 ;;; Locks
+(deftype lock ()
+  "The type of the object MAKE-LOCK returns and WITH-LOCK-HELD acquires: an
+SB-THREAD:MUTEX. Named here because a consumer that wants to declare the type
+of a slot or variable holding one -- (OR NULL CL-CONCURRENT-KIT:LOCK) in a
+DEFSTRUCT slot, say -- otherwise has to write SB-THREAD:MUTEX and reach past
+this package for the one thing the rest of it exists to wrap."
+  'sb-thread:mutex)
+
 (defun make-lock (&key name)
   "Create a mutex named NAME."
   (sb-thread:make-mutex :name name))
@@ -119,6 +127,18 @@ or NIL if TIMEOUT is NIL (no deadline)."
   (when timeout
     (+ (get-internal-real-time) (round (* timeout internal-time-units-per-second)))))
 
+(defun %seconds-until-deadline (deadline)
+  "%DEADLINE-FROM-TIMEOUT's inverse: the number of seconds remaining until
+DEADLINE (an absolute GET-INTERNAL-REAL-TIME value), floored at 0.0d0 once
+DEADLINE has already passed. DEADLINE must be non-NIL -- callers with an
+optional deadline guard this themselves, since \"no deadline\" and \"zero
+seconds remaining\" need different handling from whatever they pass the
+result to next (SB-THREAD:CONDITION-WAIT and WAIT-ON-SEMAPHORE treat a NIL
+:TIMEOUT as unbounded, not as already-expired)."
+  (max 0.0d0
+       (/ (- deadline (get-internal-real-time))
+          (float internal-time-units-per-second 0.0d0))))
+
 (defmacro %wait-until ((condition-variable lock deadline) &body predicate-forms)
   "Wait with LOCK held until PREDICATE-FORMS produce a non-NIL value, and
 return that value with LOCK still held.
@@ -148,10 +168,7 @@ unbuffered SEND is the one in this codebase) can rely on that."
            (when ,result-var
              (return ,result-var)))
          (let ((,timeout-var
-                 (when ,deadline-var
-                   (max 0.0d0
-                        (/ (- ,deadline-var (get-internal-real-time))
-                           (float internal-time-units-per-second 0.0d0))))))
+                 (when ,deadline-var (%seconds-until-deadline ,deadline-var))))
            (unless (condition-wait ,condition-variable-var ,lock-var
                                    :timeout ,timeout-var)
              (return :timeout)))))))

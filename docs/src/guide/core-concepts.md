@@ -105,10 +105,20 @@ a new thread and returns a `PROMISE` for it. The scope guarantees:
 - **A child's failure is never silently dropped.** If the body returns
   normally but one or more children failed, `WITH-TASK-SCOPE` signals
   `SCOPE-ERROR` with every failure's condition in `SCOPE-ERROR-CAUSES`.
-- **Failure cancels siblings, cooperatively.** cl-concurrent-kit cannot
-  forcibly interrupt a running SBCL thread, so a failing child trips a flag
+- **Failure cancels siblings, cooperatively.** A failing child trips a flag
   on the scope; other tasks must call `CHECK-CANCELLED` at a safe point to
-  observe it and unwind via a signaled `TASK-CANCELLED`.
+  observe it and unwind via a signaled `TASK-CANCELLED`. That is a choice,
+  not a missing mechanism -- `WITH-TIMEOUT` does forcibly interrupt a running
+  SBCL thread, through SBCL's timer and `SB-THREAD:INTERRUPT-THREAD`, so the
+  capability exists and is deliberately not used here. An asynchronous
+  interrupt lands between two arbitrary instructions, so it can unwind a task
+  whose `UNWIND-PROTECT` has not yet recorded the resource its cleanup would
+  release; a scope exists precisely to guarantee that every child it started
+  has finished and been accounted for, and that guarantee is worth more than
+  reclaiming a task a few moments sooner. Bound work that is safe to abandon
+  at an arbitrary point with `WITH-TIMEOUT`; for work that owns a resource,
+  use a scope and `CHECK-CANCELLED`. See
+  [Architecture](../reference/architecture.md#preemptive-with-timeout-cooperative-scopes).
 - **The body's own error wins.** If the body itself signals (rather than a
   `SPAWN`ed child), that condition propagates as-is after every child has
   been cancelled and awaited -- it is not wrapped in `SCOPE-ERROR`.

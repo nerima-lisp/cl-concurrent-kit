@@ -8,10 +8,12 @@
   (:import-from #:cl-concurrent-kit
    ;; Threads / locks / condition variables / semaphores / atomics
    #:make-thread #:current-thread #:thread-name #:thread-alive-p #:join-thread
-   #:make-lock #:with-lock-held
+   #:lock #:make-lock #:with-lock-held
    #:make-condition-variable #:condition-wait #:condition-notify #:condition-broadcast
    #:make-semaphore #:wait-on-semaphore #:signal-semaphore
    #:make-atomic-counter #:atomic-counter-value #:atomic-counter-incf #:atomic-counter-decf
+   ;; Preemptive deadlines
+   #:with-timeout
    ;; Promises / futures
    #:make-promise #:promise-p #:promise-settled-p #:deliver #:deliver-error #:cancel-promise
    #:await #:future
@@ -48,6 +50,7 @@
    #:channel-merge #:channel-zip #:channel-concat #:channel-concat-map
    #:channel-merge-map #:channel-switch-map
    ;; Conditions
+   #:cl-concurrent-kit-error
    #:operation-timed-out #:operation-timed-out-operation #:operation-timed-out-timeout
    #:promise-already-fulfilled #:promise-already-fulfilled-promise
    #:channel-closed #:channel-closed-channel
@@ -78,3 +81,30 @@ fails."
     (error "cl-concurrent-kit test suite failed"))
   (format t "~&cl-concurrent-kit/test: successful completion with 0 failures~%")
   t)
+
+(defun occupy-worker (executor)
+  "Submit a task to EXECUTOR that blocks until released, wait for it to
+actually claim a worker, and return a RELEASE semaphore the caller signals
+once that task should finish. The confirmation this waits on is what several
+tests below need before submitting further work of their own: a task still
+merely queued, not yet claimed by a worker, would leave EXECUTOR-QUEUE-DEPTH
+one higher than a caller expecting a single occupied worker plus its own
+submissions."
+  (let ((started (make-semaphore))
+        (release (make-semaphore)))
+    (submit executor (lambda () (signal-semaphore started) (wait-on-semaphore release)))
+    (wait-or-fail started "occupied worker did not start")
+    release))
+
+(defmacro expect-signals ((condition-var condition-type) form &body checks)
+  "Evaluate FORM, expecting it to signal a CONDITION-TYPE condition instead of
+returning normally, and bind CONDITION-VAR to the caught condition for CHECKS
+-- a body of further EXPECT forms -- to inspect. Fails the test with a plain
+ERROR if FORM returns normally instead. The richer counterpart to cl-weave's
+own SIGNALS: SIGNALS only checks that some condition of a given type was
+signaled, while EXPECT-SIGNALS also hands the caller the condition itself, for
+tests that must inspect which promise, channel, or executor a condition names."
+  `(handler-case
+       (progn ,form (error "expected ~S to signal ~S but it returned normally" ',form ',condition-type))
+     (,condition-type (,condition-var)
+       ,@checks)))
