@@ -105,6 +105,7 @@ my %non_executable_da = map { $_ => 1 } qw(
   stream-partition.lisp:6 stream-partition.lisp:8
 );
 my %seen_non_executable_da;
+my @DIAG_uncovered;
 
 sub finish_record {
   return unless $in_record;
@@ -150,6 +151,7 @@ while (<$lcov>) {
     }
     $record_da_total++ if $in_record;
     $record_da_hit++ if $in_record && $hits > 0;
+    push @DIAG_uncovered, $location if $in_record && $hits == 0;
   } elsif (/^BA:[0-9]+,([0-9]+)$/) {
     $invalid = 1 unless $in_record;
     $record_ba_total++ if $in_record;
@@ -172,8 +174,10 @@ my @missing_non_executable_da = sort grep { !$seen_non_executable_da{$_} }
 die "SB-COVER exclusion locations disappeared: @missing_non_executable_da\n"
   if @missing_non_executable_da;
 die "LCOV reports zero instrumented expressions\n" unless $total_da;
-die "LCOV expression coverage is $total_da_hit/$total_da, not 100%\n"
-  unless $total_da_hit == $total_da;
+if ($total_da_hit != $total_da) {
+  warn "DIAG uncovered: @{[sort @DIAG_uncovered]}\n";
+  die "LCOV expression coverage is $total_da_hit/$total_da, not 100%\n";
+}
 die "LCOV branch coverage is $total_ba_hit/$total_ba, not 100%\n"
   if $total_ba && $total_ba_hit != $total_ba;
 print "LCOV total expression coverage: $total_da_hit/$total_da (100%)\n";
