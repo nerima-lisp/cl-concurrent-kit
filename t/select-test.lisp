@@ -49,6 +49,12 @@
       (expect (select ((recv channel) (v) v)) :to-be :delayed)
       (join-thread producer)))
   (it
+    "wakes a blocked clause when another thread closes its channel"
+    (let* ((channel (make-channel))
+           (closer (make-thread (lambda () (sleep 0.05) (close-channel channel)))))
+      (expect (select ((recv channel) (value) value)) :to-be nil)
+      (join-thread closer)))
+  (it
     "runs :TIMEOUT for blocked receive and send clauses"
     (let ((empty (make-channel :buffer-size 1))
           (full (make-channel :buffer-size 1)))

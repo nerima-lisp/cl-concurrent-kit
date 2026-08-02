@@ -331,6 +331,22 @@
             (loop until (zerop (executor-queue-depth executor)) do (sleep 0.001))
             (expect ran :to-be 100))
         (when release (signal-semaphore release))
+        (shutdown-executor executor :wait t :timeout 1))))
+
+  (it "grows a bounded queue's ring buffer up to its capacity, not past it"
+    (let ((executor (make-executor :size 1 :queue-capacity 100))
+          (ran 0)
+          release)
+      (unwind-protect
+          (progn
+            (setf release (occupy-worker executor))
+            (dotimes (i 100) (declare (ignore i)) (submit executor (lambda () (incf ran))))
+            (expect (executor-queue-depth executor) :to-be 100)
+            (signals executor-queue-full (await (submit executor (lambda () nil)) :timeout 1))
+            (signal-semaphore release)
+            (loop until (zerop (executor-queue-depth executor)) do (sleep 0.001))
+            (expect ran :to-be 100))
+        (when release (signal-semaphore release))
         (shutdown-executor executor :wait t :timeout 1)))))
 
 (describe "bounded executor queue"
