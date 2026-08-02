@@ -6,7 +6,7 @@
 ;;;; behavior beyond what SB-THREAD already documents; the wrapping exists so
 ;;;; the rest of this package (and its callers) name one vocabulary instead of
 ;;;; reaching into SB-THREAD directly.
-(in-package #:cl-concurrent-kit)
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 ;;; Threads
 (defun make-thread (function &key name arguments)
@@ -195,3 +195,4 @@ should use %WAIT-UNTIL directly instead -- see its docstring."
      (when (eq ,result-var :timeout)
        (error 'operation-timed-out :operation ,operation :timeout ,timeout))
      ,@body))
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

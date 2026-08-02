@@ -4,28 +4,40 @@
 (describe
   "select"
   (it
-    "chooses a RECV clause whose channel already has a value"
-    (let ((empty (make-channel :buffer-size 1))
-          (ready (make-channel :buffer-size 1)))
-      (send ready :from-ready)
-      (expect
-        (select ((recv empty) (v) (list :empty v)) ((recv ready) (v) (list :ready v)))
-        :to-equal
-        `(:ready :from-ready))))
+   "chooses a RECV clause whose channel already has a value without registering waiters"
+   (let ((empty (make-channel :buffer-size 1))
+         (ready (make-channel :buffer-size 1)))
+     (send ready :from-ready)
+     (expect
+      (select ((recv empty) (v) (list :empty v)) ((recv ready) (v) (list :ready v)))
+      :to-equal
+      `(:ready :from-ready))
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters empty)) :to-be 0)
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters ready)) :to-be 0)))
   (it
-    "runs :DEFAULT for blocked receive and send clauses"
-    (let ((empty (make-channel :buffer-size 1))
-          (full (make-channel :buffer-size 1)))
-      (send full :occupied)
-      (expect
-        (select ((recv empty) (value) (list :recv value)) (:default () :nothing-ready))
-        :to-be
-        :nothing-ready)
-      (expect
-        (select ((send full :next) () :sent) (:default () :nothing-ready))
-        :to-be
-        :nothing-ready)
-      (expect (recv full) :to-be :occupied)))
+   "runs :DEFAULT for blocked receive and send clauses without registering waiters"
+   (let ((empty (make-channel :buffer-size 1))
+         (full (make-channel :buffer-size 1)))
+     (send full :occupied)
+     (expect
+      (select ((recv empty) (value) (list :recv value)) (:default () :nothing-ready))
+      :to-be
+      :nothing-ready)
+     (expect
+      (select ((send full :next) () :sent) (:default () :nothing-ready))
+      :to-be
+      :nothing-ready)
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters empty)) :to-be 0)
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters full)) :to-be 0)
+     (expect (recv full) :to-be :occupied)))
+  (it
+   "runs :TIMEOUT without waiting or registering waiters when its deadline has already expired"
+   (let ((channel (make-channel :buffer-size 1)))
+     (expect
+      (select ((recv channel) (v) (list :recv v)) (:timeout 0 () :expired))
+      :to-be
+      :expired)
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters channel)) :to-be 0)))
   (it
     "blocks until another thread makes a clause ready"
     (let* ((channel (make-channel))
@@ -51,12 +63,14 @@
         :gave-up)
       (expect (recv full) :to-be :occupied)))
   (it
-    "runs :TIMEOUT without waiting when its deadline has already expired"
-    (let ((channel (make-channel :buffer-size 1)))
-      (expect
-        (select ((recv channel) (v) (list :recv v)) (:timeout 0 () :expired))
-        :to-be
-        :expired)))
+   "chooses an already ready clause before a zero timeout"
+   (let ((channel (make-channel :buffer-size 1)))
+     (send channel :ready)
+     (expect
+      (select ((recv channel) (value) value) (:timeout 0 () :expired))
+      :to-be
+      :ready)
+     (expect (hash-table-count (cl-concurrent-kit::channel-waiters channel)) :to-be 0)))
   (it
     "can select on a SEND clause"
     (let* ((channel (make-channel))
@@ -201,10 +215,12 @@
           (try-send channel :value)
           (expect (wait-on-semaphore recv-waiter :timeout 0.01d0) :to-be-truthy)
           (expect (wait-on-semaphore both-waiter :timeout 0.01d0) :to-be-truthy)
+          (expect (wait-on-semaphore both-waiter :timeout 0.01d0) :to-be nil)
           (expect (wait-on-semaphore send-waiter :timeout 0.01d0) :to-be nil)
           (try-recv channel)
           (expect (wait-on-semaphore send-waiter :timeout 0.01d0) :to-be-truthy)
-          (expect (wait-on-semaphore both-waiter :timeout 0.01d0) :to-be-truthy))
+          (expect (wait-on-semaphore both-waiter :timeout 0.01d0) :to-be-truthy)
+          (expect (wait-on-semaphore both-waiter :timeout 0.01d0) :to-be nil))
       (cl-concurrent-kit::%channel-remove-waiter channel send-waiter)
       (cl-concurrent-kit::%channel-remove-waiter channel recv-waiter)
       (cl-concurrent-kit::%channel-remove-waiter channel both-waiter))))

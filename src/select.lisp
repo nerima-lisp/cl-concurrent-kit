@@ -6,7 +6,7 @@
 ;;;; registered as a CHANNEL waiter (src/channel.lisp's %CHANNEL-ADD-WAITER),
 ;;;; so a SELECT with nothing ready sleeps instead of busy-polling and wakes
 ;;;; as soon as any one of its channels changes state.
-(in-package #:cl-concurrent-kit)
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (let (#+sbcl (sb-ext:*evaluator-mode* :interpret))
@@ -127,23 +127,28 @@ instant TRY-SEND succeeds."
                    collect `(%channel-remove-waiter ,(second binding) ,waiter)))
            (probe-forms (%select-probe-forms bindings block)))
       `(let* (,@binding-forms
-              (,waiter (make-semaphore))
               (,deadline ,(when timeout `(%deadline-from-timeout ,(car timeout)))))
          (block ,block
-           (unwind-protect
-                (progn
-                  ,@registration-forms
-                  (loop
-                    ,@probe-forms
-                    ,(when default-seen-p `(return-from ,block (locally ,@default-body)))
-                    ,(if timeout
-                         `(let ((remaining
-                                  (and ,deadline (%seconds-until-deadline ,deadline))))
-                            (if (and remaining (zerop remaining))
-                                (return-from ,block (locally ,@(cdr timeout)))
-                                (wait-on-semaphore ,waiter :timeout remaining)))
-                         `(wait-on-semaphore ,waiter))))
-             ,@removal-forms))))))))))
+           ,@probe-forms
+           ,(when default-seen-p
+              `(return-from ,block (locally ,@default-body)))
+           ,(when timeout
+              `(let ((remaining (and ,deadline (%seconds-until-deadline ,deadline))))
+                 (when (and remaining (zerop remaining))
+                   (return-from ,block (locally ,@(cdr timeout))))))
+           (let ((,waiter (make-semaphore)))
+             (unwind-protect
+                  (progn
+                    ,@registration-forms
+                    (loop
+                      ,@probe-forms
+                      ,(if timeout
+                           `(let ((remaining (and ,deadline (%seconds-until-deadline ,deadline))))
+                              (if (and remaining (zerop remaining))
+                                  (return-from ,block (locally ,@(cdr timeout)))
+                                  (wait-on-semaphore ,waiter :timeout remaining)))
+                           `(wait-on-semaphore ,waiter))))
+               ,@removal-forms)))))))))))
 
 (defmacro select (&body clauses)
   "Wait on multiple channel operations, running the body of whichever becomes
@@ -173,3 +178,4 @@ not escape to a caller-written (LOOP ...) wrapped around the whole SELECT
 call the way it might look like it should. Use an explicit named BLOCK and
 RETURN-FROM around the enclosing loop instead."
   (%expand-select clauses))
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

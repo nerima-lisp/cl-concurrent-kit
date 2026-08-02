@@ -1,15 +1,12 @@
 ;;;; src/fifo.lisp
 ;;;;
-;;;; An intrusive doubly-linked FIFO queue, shared by CHANNEL's buffer
-;;;; (src/channel.lisp) and the executor's internal work queue
-;;;; (src/executor.lisp). Not part of the public API.
+;;;; An intrusive doubly-linked FIFO queue for internal linked-list use.
+;;;; Not part of the public API.
 ;;;;
-;;;; Each FIFO-CELL knows its own place in the list, so removing a specific
-;;;; cell (FIFO-REMOVE, used to cancel a pending executor task) is O(1)
-;;;; instead of an O(N) list scan, and detaching every cell at once
-;;;; (FIFO-DETACH, used to drain the queue on executor shutdown) is O(1)
-;;;; regardless of queue length.
-(in-package #:cl-concurrent-kit)
+;;;; Each FIFO-CELL knows its own place in the list, so FIFO-REMOVE is O(1)
+;;;; without an O(N) scan. FIFO-POP stays O(1), and FIFO-DETACH is O(1)
+;;;; because it moves only the two endpoints.
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defstruct (fifo-cell (:constructor %make-fifo-cell (value)))
   (value nil :read-only t)
@@ -84,3 +81,4 @@ Returns NIL, leaving FIFO untouched, if FIFO was already empty."
             (fifo-head fifo) nil
             (fifo-tail fifo) nil)
       detached)))
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

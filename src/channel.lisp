@@ -6,187 +6,215 @@
 ;;;; BUFFER-SIZE N > 0 is a bounded queue: SEND only blocks once N values are
 ;;;; already waiting. Both share one implementation below by treating
 ;;;; unbuffered as "capacity 1, and SEND additionally waits for the drain".
-(in-package #:cl-concurrent-kit)
+(progn
+  (in-package #:cl-concurrent-kit)
+  (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1)))
+  (declaim (inline %channel-buffer-push
+                   %channel-buffer-pop
+                   %channel-remove-unbuffered-message)))
 
-(defstruct (channel (:constructor %make-channel (buffer-size capacity)))
+(defstruct (channel (:constructor %make-channel (buffer-size capacity buffer)))
   (lock (make-lock :name "cl-concurrent-kit channel") :read-only t)
   (send-condition-variable
-   (make-condition-variable :name "cl-concurrent-kit channel send")
-   :read-only t)
+    (make-condition-variable :name "cl-concurrent-kit channel send")
+    :read-only t)
   (recv-condition-variable
-   (make-condition-variable :name "cl-concurrent-kit channel recv")
-   :read-only t)
+    (make-condition-variable :name "cl-concurrent-kit channel recv")
+    :read-only t)
   (rendezvous-condition-variable
-   (make-condition-variable :name "cl-concurrent-kit channel rendezvous")
-   :read-only t)
+    (make-condition-variable :name "cl-concurrent-kit channel rendezvous")
+    :read-only t)
   (buffer-size 0 :read-only t :type (integer 0 #.most-positive-fixnum))
-  ;; (MAX 1 BUFFER-SIZE), precomputed once: an unbuffered channel is modeled
-  ;; as a single-slot buffer everywhere below.
   (capacity 1 :read-only t :type (integer 1 #.most-positive-fixnum))
-  (queue (make-fifo) :read-only t)
+  (buffer nil :read-only t :type (simple-array t (*)))
+  (head 0 :type (integer 0 #.most-positive-fixnum))
+  (tail 0 :type (integer 0 #.most-positive-fixnum))
   (count 0 :type (integer 0 #.most-positive-fixnum))
+  (rendezvous-generation 0 :type (integer 0 #.most-positive-fixnum))
   (closed-p nil)
-  ;; Semaphores registered by in-progress SELECT calls (src/select.lisp),
-  ;; each mapped to a bitmask of the channel events it can actually use.
-  ;; %CHANNEL-NOTIFY signals only the waiters whose interests overlap the
-  ;; transition that just happened (or every waiter, on close), instead of
-  ;; waking every SELECT blocked on this channel for an event it cannot use.
   (waiters (make-hash-table :test (function eq)) :read-only t)
+  (waiter-buckets nil :type (or null (simple-array t (8))))
+  (waiter-interest-counts
+    (make-array 3 :element-type (quote fixnum) :initial-element 0)
+    :type
+    (simple-array fixnum (3)))
+  (waiter-interests 0 :type (unsigned-byte 3))
   (waiter-count 0 :type fixnum))
-
-(defstruct (%channel-message (:constructor %make-channel-message (value)))
-  "An unbuffered channel's queue entry: SEND must know once RECV has actually
-taken VALUE back out, to turn the rendezvous wait below into a synchronization
-point instead of returning as soon as the value is merely queued."
-  (value nil :read-only t)
-  (received-p nil))
 
 (defmacro %with-channel-lock ((channel) &body body)
   "Hold CHANNEL's own lock for the dynamic extent of BODY."
   `(with-lock-held ((channel-lock ,channel)) ,@body))
 
-(setf (documentation 'channel-closed-p 'function)
-      "True once CLOSE-CHANNEL has been called on CHANNEL. A momentary,
+(setf (documentation 'channel-closed-p 'function) "True once CLOSE-CHANNEL has been called on CHANNEL. A momentary,
 lock-free read -- like THREAD-ALIVE-P, treat it as advisory rather than
 linearized with concurrent SEND/RECV.")
 
-(defun make-channel (&key (buffer-size 0))
-  "Create a channel. BUFFER-SIZE 0 (the default) is an unbuffered, CSP-style
-rendezvous channel: SEND blocks until a RECV takes the value. BUFFER-SIZE N >
-0 lets up to N values queue up before SEND blocks."
-  (check-type buffer-size (integer 0 #.most-positive-fixnum))
-  (%make-channel buffer-size (max 1 buffer-size)))
+(progn
+  (defun %channel-buffer-push (channel entry)
+    (declare (type channel channel))
+    (let ((tail (channel-tail channel))
+          (capacity (channel-capacity channel)))
+      (setf (aref (channel-buffer channel) tail) entry
+            (channel-tail channel) (if (= tail (1- capacity)) 0
+          (1+ tail)))
+      (incf (channel-count channel)))
+    channel)
+  (defun %channel-buffer-pop (channel)
+    (declare (type channel channel))
+    (let ((head (channel-head channel))
+          (capacity (channel-capacity channel)))
+      (prog1
+        (aref (channel-buffer channel) head)
+        (setf (aref (channel-buffer channel) head) nil
+              (channel-head channel) (if (= head (1- capacity)) 0
+            (1+ head)))
+        (decf (channel-count channel)))))
+  (defun %channel-remove-unbuffered-message (channel)
+  (declare (type channel channel))
+  (when (plusp (channel-count channel))
+    (%channel-buffer-pop channel)
+    t))
+  (defun make-channel (&key (buffer-size 0))
+    "Create a channel. BUFFER-SIZE 0 (the default) is an unbuffered, CSP-style rendezvous channel: SEND blocks until a RECV takes the value. BUFFER-SIZE N > 0 lets up to N values queue up before SEND blocks."
+    (check-type buffer-size (integer 0 #.most-positive-fixnum))
+    (let ((capacity (max 1 buffer-size)))
+      (%make-channel buffer-size capacity (make-array capacity)))))
 
 (defconstant +channel-notify-send+ #b0001)
+
 (defconstant +channel-notify-recv+ #b0010)
+
 (defconstant +channel-notify-rendezvous+ #b0100)
+
 (defconstant +channel-notify-close+ #b1000)
 
-(defmacro %channel-notify (channel notifications)
-  "Expand the locked channel notification fast path at each state transition.
-CHANNEL and NOTIFICATIONS are evaluated exactly once. Waiters carry an
-interest mask, so a state transition signals only SELECT operations that can
-retry."
-  (let ((channel-variable (gensym "CHANNEL-"))
-        (notifications-variable (gensym "NOTIFICATIONS-"))
-        (close-variable (gensym "CLOSE-P-")))
-    `(let* ((,channel-variable ,channel)
-            (,notifications-variable ,notifications)
-            (,close-variable
-              (logtest +channel-notify-close+ ,notifications-variable)))
-       (declare
-        (type channel ,channel-variable)
-        (type (unsigned-byte 4) ,notifications-variable))
-       (if ,close-variable
-           (progn
-             (condition-broadcast (channel-send-condition-variable ,channel-variable))
-             (condition-broadcast (channel-recv-condition-variable ,channel-variable))
-             (condition-broadcast (channel-rendezvous-condition-variable ,channel-variable)))
-           (progn
-             (when (logtest +channel-notify-send+ ,notifications-variable)
-               (condition-notify (channel-send-condition-variable ,channel-variable)))
-             (when (logtest +channel-notify-recv+ ,notifications-variable)
-               (condition-notify (channel-recv-condition-variable ,channel-variable)))
-             (when (logtest +channel-notify-rendezvous+ ,notifications-variable)
-               (condition-notify (channel-rendezvous-condition-variable ,channel-variable)))))
-       (when (plusp (channel-waiter-count ,channel-variable))
-         (maphash
-          (lambda (semaphore interests)
-            (when (or ,close-variable (logtest ,notifications-variable interests))
-              (signal-semaphore semaphore)))
-          (channel-waiters ,channel-variable))))))
+(defun %channel-waiter-bucket (channel interests)
+  "Return the bucket for CHANNEL and the merged INTERESTS mask."
+  (let ((buckets
+        (or
+          (channel-waiter-buckets channel)
+          (setf (channel-waiter-buckets channel) (make-array 8 :initial-element nil)))))
+    (or
+      (aref buckets interests)
+      (setf (aref buckets interests) (make-hash-table :test (function eq))))))
+
+(progn
+  (defun %channel-notify-waiters (channel notifications close-p)
+    (declare (type channel channel)
+             (type (unsigned-byte 4) notifications)
+             (type boolean close-p))
+    (unless (or close-p (logtest notifications (channel-waiter-interests channel)))
+      (return-from %channel-notify-waiters))
+    (flet ((notify-bucket (interests)
+             (let ((bucket (aref (channel-waiter-buckets channel) interests)))
+            (when bucket
+              (maphash
+                (lambda (semaphore present-p)
+                  (declare (ignore present-p))
+                  (signal-semaphore semaphore))
+                bucket)))))
+      (if close-p (loop for interests fixnum from 0 below 8
+              do (notify-bucket interests))
+        (loop for interests fixnum from 1 below 8
+              when (logtest notifications interests)
+                do (notify-bucket interests)))))
+  (defmacro %channel-notify (channel notifications)
+    "Notify waiters affected by a locked CHANNEL state transition."
+    (let ((channel-var (gensym "CHANNEL-"))
+          (notifications-var (gensym "NOTIFICATIONS-"))
+          (close-p-var (gensym "CLOSE-P-")))
+      `(let* ((,channel-var ,channel)
+             (,notifications-var ,notifications)
+             (,close-p-var (logtest +channel-notify-close+ ,notifications-var)))
+        (declare (type channel ,channel-var)
+                 (type (unsigned-byte 4) ,notifications-var))
+        (if ,close-p-var (progn
+            (condition-broadcast (channel-send-condition-variable ,channel-var))
+            (condition-broadcast (channel-recv-condition-variable ,channel-var))
+            (condition-broadcast (channel-rendezvous-condition-variable ,channel-var)))
+          (progn
+            (when (logtest +channel-notify-send+ ,notifications-var)
+              (condition-notify (channel-send-condition-variable ,channel-var)))
+            (when (logtest +channel-notify-recv+ ,notifications-var)
+              (condition-notify (channel-recv-condition-variable ,channel-var)))
+            (when (logtest +channel-notify-rendezvous+ ,notifications-var)
+              (condition-notify (channel-rendezvous-condition-variable ,channel-var)))))
+        (when (plusp (channel-waiter-count ,channel-var))
+          (%channel-notify-waiters ,channel-var ,notifications-var ,close-p-var))))))
 
 (defun %channel-add-waiter (channel semaphore &optional (interests #b0111))
-  "Register SEMAPHORE for channel events in INTERESTS. Called by SELECT
-(src/select.lisp), once per clause, so the same semaphore may already be
-registered for a different interest on this same channel; the two masks are
-merged rather than one replacing the other."
+  "Register SEMAPHORE to be signaled when CHANNEL state matches INTERESTS."
+  (declare (type channel channel)
+           (type (unsigned-byte 3) interests))
   (check-type interests (unsigned-byte 3))
-  (%with-channel-lock (channel)
-    (multiple-value-bind (registered-interests present-p)
-        (gethash semaphore (channel-waiters channel))
-      (if present-p
-          (setf (gethash semaphore (channel-waiters channel))
-                (logior (the (unsigned-byte 3) registered-interests) interests))
-          (progn
-            (setf (gethash semaphore (channel-waiters channel)) interests)
-            (incf (channel-waiter-count channel)))))))
+  (%with-channel-lock
+    (channel)
+    (multiple-value-bind (registered-interests present-p) (gethash semaphore (channel-waiters channel))
+      (let* ((registered-interests
+            (if present-p (the (unsigned-byte 3) registered-interests)
+              0))
+             (merged-interests
+            (the (unsigned-byte 3) (logior registered-interests interests)))
+             (new-interests
+            (the (unsigned-byte 3) (logandc2 merged-interests registered-interests)))
+             (changed-p (not (and present-p (= registered-interests merged-interests)))))
+        (declare (type (unsigned-byte 3) registered-interests merged-interests new-interests))
+        (when changed-p
+          (when present-p
+            (remhash semaphore (aref (channel-waiter-buckets channel) registered-interests)))
+          (setf (gethash semaphore (channel-waiters channel)) merged-interests
+                (gethash semaphore (%channel-waiter-bucket channel merged-interests)) t
+                (channel-waiter-interests channel) (the
+              (unsigned-byte 3)
+              (logior (channel-waiter-interests channel) new-interests)))
+          (loop for bit fixnum from 0 below 3
+                when (logbitp bit new-interests)
+                  do (incf (aref (channel-waiter-interest-counts channel) bit)))
+          (unless present-p
+            (incf (channel-waiter-count channel))))))))
 
 (defun %channel-remove-waiter (channel semaphore)
-  (%with-channel-lock (channel)
-    (when (remhash semaphore (channel-waiters channel))
-      (decf (channel-waiter-count channel)))))
+  (%with-channel-lock
+    (channel)
+    (multiple-value-bind (interests present-p) (gethash semaphore (channel-waiters channel))
+      (when present-p
+        (remhash semaphore (channel-waiters channel))
+        (remhash semaphore (aref (channel-waiter-buckets channel) interests))
+        (loop for bit fixnum from 0 below 3
+              when (logbitp bit interests)
+                do (let ((remaining (decf (aref (channel-waiter-interest-counts channel) bit))))
+            (when (zerop remaining)
+              (setf (channel-waiter-interests channel) (the
+                  (unsigned-byte 3)
+                  (logandc2 (channel-waiter-interests channel) (ash 1 bit)))))))
+        (decf (channel-waiter-count channel))))))
 
-(defun send (channel value &key timeout)
-  "Send VALUE on CHANNEL, blocking while it is full (buffered) or until a
-RECV takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals
-OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED
-if CHANNEL is already closed."
-  (%with-channel-lock (channel)
-    (let* ((deadline (%deadline-from-timeout timeout))
-           (unbuffered-p (zerop (channel-buffer-size channel)))
-           (entry (if unbuffered-p (%make-channel-message value) value))
-           (capacity (channel-capacity channel))
-           (cell nil))
-      (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel)
-                            deadline timeout :send)
-          (cond
-            ((channel-closed-p channel) :closed)
-            ((< (channel-count channel) capacity) :ready))
-        (when (eq room :closed) (error 'channel-closed :channel channel)))
-      (setf cell (fifo-push (channel-queue channel) entry))
-      (incf (channel-count channel))
-      (%channel-notify channel +channel-notify-recv+)
-      ;; The capacity-1 trick above only models the queuing half of an
-      ;; unbuffered channel. What makes it a rendezvous rather than a
-      ;; buffer-size-1 channel is this: SEND does not return until a RECV
-      ;; has actually taken the value back out again.
-      ;;
-      ;; Known limitation: this second wait only reacts to a timeout, not to
-      ;; a concurrent CLOSE-CHANNEL -- closing a channel out from under your
-      ;; own in-flight unbuffered SEND is not a supported pattern (as in Go,
-      ;; only the sending side should close a channel). On a timeout, the
-      ;; entry this SEND itself queued is removed again -- in O(1), via
-      ;; CELL, the FIFO-CELL FIFO-PUSH returned -- so it is not left for
-      ;; some future RECV to hand out as if it had actually been received.
-      (when (and unbuffered-p
-                 (eq :timeout
-                     (%wait-until
-                       ((channel-rendezvous-condition-variable channel)
-                         (channel-lock channel)
-                         deadline)
-                       (%channel-message-received-p entry))))
-        (unless (%channel-message-received-p entry)
-          (when (fifo-remove (channel-queue channel) cell)
-            (decf (channel-count channel))
-            (%channel-notify channel +channel-notify-send+))
-          (error 'operation-timed-out :operation :send :timeout timeout)))))
-  t)
+(defun send (channel value &key timeout) "Send VALUE on CHANNEL, blocking while it is full (buffered) or until a RECV takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED if CHANNEL is already closed." (declare (type channel channel)) (%with-channel-lock (channel) (let* ((deadline (%deadline-from-timeout timeout)) (unbuffered-p (zerop (channel-buffer-size channel))) (generation nil) (capacity (channel-capacity channel))) (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel) deadline timeout :send) (cond ((channel-closed-p channel) :closed) ((< (channel-count channel) capacity) :ready)) (when (eq room :closed) (error (quote channel-closed) :channel channel))) (when unbuffered-p (setf generation (channel-rendezvous-generation channel))) (%channel-buffer-push channel value) (%channel-notify channel +channel-notify-recv+) (when (and unbuffered-p (eq :timeout (%wait-until ((channel-rendezvous-condition-variable channel) (channel-lock channel) deadline) (/= generation (channel-rendezvous-generation channel)))) (= generation (channel-rendezvous-generation channel))) (when (%channel-remove-unbuffered-message channel) (%channel-notify channel +channel-notify-send+)) (error (quote operation-timed-out) :operation :send :timeout timeout))) t))
 
 (defun %channel-dequeue (channel)
   "Pop CHANNEL's next queued entry, update COUNT and an unbuffered entry's
-RECEIVED-P, and notify whichever waiters that transition unblocks, then
-return the value itself (unwrapped from its %CHANNEL-MESSAGE if CHANNEL is
-unbuffered). Shared by RECV and TRY-RECV below, which differ only in how they
-wait for something to dequeue in the first place and how many further values
-they wrap around this one -- CHANNEL must already have a value available
-(COUNT plusp) under CHANNEL's own lock; neither caller calls this otherwise."
-  (let* ((entry (fifo-pop (channel-queue channel)))
-         (unbuffered-p (zerop (channel-buffer-size channel))))
-    (decf (channel-count channel))
+RENDEZVOUS-GENERATION, and notify whichever waiters that transition unblocks,
+then return the value itself. Shared by RECV and TRY-RECV below, which differ
+only in how they wait for something to dequeue in the first place -- CHANNEL
+must already have a value available (COUNT plusp) under CHANNEL's own lock;
+neither caller calls this otherwise."
+  (declare (type channel channel))
+  (let ((entry (%channel-buffer-pop channel))
+        (unbuffered-p (zerop (channel-buffer-size channel))))
     (when unbuffered-p
-      (setf (%channel-message-received-p entry) t))
+      (incf (channel-rendezvous-generation channel)))
     (%channel-notify channel
                       (if unbuffered-p
                           (logior +channel-notify-send+ +channel-notify-rendezvous+)
                           +channel-notify-send+))
-    (if unbuffered-p (%channel-message-value entry) entry)))
+    entry))
 
 (defun recv (channel &key timeout)
   "Receive a value from CHANNEL, blocking until one is available or CHANNEL
 is closed. Returns (VALUES VALUE T), or (VALUES NIL NIL) once CHANNEL is
 closed and every value sent before the close has been drained. With TIMEOUT
 (seconds), signals OPERATION-TIMED-OUT if neither happens in time."
+  (declare (type channel channel))
   (%with-channel-lock (channel)
     (%with-deadline-wait (ready (channel-recv-condition-variable channel) (channel-lock channel)
                           (%deadline-from-timeout timeout) timeout :recv)
@@ -197,29 +225,14 @@ closed and every value sent before the close has been drained. With TIMEOUT
         (:closed (values nil nil))
         (:ready (values (%channel-dequeue channel) t))))))
 
-(defun try-send (channel value)
-  "Non-blocking SEND: deposit VALUE and return T if room is immediately
-available, else return NIL. Unlike SEND, does not wait for an unbuffered
-channel's value to actually be received -- that confirmation is exactly what
-blocking costs buy, and TRY-SEND trades it away for a non-blocking guarantee.
-Signals CHANNEL-CLOSED if CHANNEL is already closed."
-  (%with-channel-lock (channel)
-    (when (channel-closed-p channel)
-      (error 'channel-closed :channel channel))
-    (when (< (channel-count channel) (channel-capacity channel))
-      (fifo-push (channel-queue channel)
-                 (if (zerop (channel-buffer-size channel))
-                     (%make-channel-message value)
-                     value))
-      (incf (channel-count channel))
-      (%channel-notify channel +channel-notify-recv+)
-      t)))
+(defun try-send (channel value) "Non-blocking SEND: deposit VALUE and return T if room is immediately available, else return NIL. Unlike SEND, does not wait for an unbuffered channel value to actually be received. Signals CHANNEL-CLOSED if CHANNEL is already closed." (declare (type channel channel)) (%with-channel-lock (channel) (when (channel-closed-p channel) (error (quote channel-closed) :channel channel)) (when (< (channel-count channel) (channel-capacity channel)) (%channel-buffer-push channel value) (%channel-notify channel +channel-notify-recv+) t)))
 
 (defun try-recv (channel)
   "Non-blocking RECV. Returns (VALUES VALUE T NIL) if a value was
 immediately available, (VALUES NIL NIL T) if CHANNEL is closed and every
 buffered value has been drained, or (VALUES NIL NIL NIL) if nothing is
 available right now but CHANNEL may still produce more."
+  (declare (type channel channel))
   (%with-channel-lock (channel)
     (cond
       ((plusp (channel-count channel)) (values (%channel-dequeue channel) t nil))
@@ -229,8 +242,12 @@ available right now but CHANNEL may still produce more."
 (defun close-channel (channel)
   "Close CHANNEL: further SEND or TRY-SEND calls signal CHANNEL-CLOSED, but
 RECV/TRY-RECV keep draining any values already queued. Idempotent."
-  (%with-channel-lock (channel)
+  (declare (type channel channel))
+  (%with-channel-lock
+    (channel)
     (unless (channel-closed-p channel)
       (setf (channel-closed-p channel) t)
       (%channel-notify channel +channel-notify-close+)))
   channel)
+
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

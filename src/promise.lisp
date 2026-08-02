@@ -5,7 +5,7 @@
 ;;;; blocks until it is settled. FUTURE spawns a thread that settles a fresh
 ;;;; promise with the value (or condition) its body produces -- the
 ;;;; JS/Rust-style async handle built directly on the PRIMITIVES layer.
-(in-package #:cl-concurrent-kit)
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defstruct (promise (:constructor %make-promise ()))
   (lock (make-lock :name "cl-concurrent-kit promise") :read-only t)
@@ -38,6 +38,7 @@ VALUE. An observer that signals does not stop the rest from being notified --
 its condition is remembered and re-signaled only after every observer has had
 a chance to run, so one broken PROMISE-THEN/PROMISE-ALL-SETTLED continuation
 cannot silently suppress delivery to unrelated ones."
+  (declare (type (member :fulfilled :failed) state))
   (let (observers
         first-error)
     (with-lock-held
@@ -55,6 +56,7 @@ cannot silently suppress delivery to unrelated ones."
           (setf (promise-failure promise) value)))
       (condition-broadcast (promise-condition-variable promise)))
     (dolist (observer observers)
+      (declare (type function observer))
       (handler-case (funcall observer state value)
         (error (condition)
           (unless first-error
@@ -73,6 +75,7 @@ are either retained for notification or called after the settled state is
 read. Shared by AWAIT's callers indirectly (via DELIVER/DELIVER-ERROR) and
 directly by src/promise-combinators.lisp's PROMISE-THEN, PROMISE-RACE, and
 PROMISE-ALL-SETTLED, none of which spawn a thread or poll."
+  (declare (type function observer))
   (let (state
         outcome)
     (with-lock-held
@@ -153,12 +156,20 @@ with, or re-signal the condition DELIVER-ERROR was called with. With TIMEOUT
 (seconds), signals OPERATION-TIMED-OUT if PROMISE is not settled in time."
   (with-lock-held
     ((promise-lock promise))
+    ;; Settled promises are common in continuation and executor paths. Avoid
+    ;; preparing a deadline or entering the condition-variable loop for them.
+    (let ((state (promise-state promise)))
+      (unless (eq state :pending)
+        (return-from await
+          (ecase state
+            (:fulfilled (promise-value promise))
+            (:failed (error (promise-failure promise)))))))
     (let ((result
-          (%wait-until
-            ((promise-condition-variable promise)
-              (promise-lock promise)
-              (%deadline-from-timeout timeout))
-            (not (eq (promise-state promise) :pending)))))
+            (%wait-until
+              ((promise-condition-variable promise)
+               (promise-lock promise)
+               (%deadline-from-timeout timeout))
+              (not (eq (promise-state promise) :pending)))))
       (when (eq result :timeout)
         (error 'operation-timed-out :operation :await :timeout timeout))
       (ecase (promise-state promise)
@@ -181,6 +192,7 @@ Returns PROMISE immediately, without waiting for THUNK to run.
 Shared by %FUTURE (a fresh PROMISE) and SRC/SCOPE-EXECUTION.LISP's
 %SPAWN-THREAD-CHILD (a PROMISE SPAWN already created), the two places this
 package hands a thunk to a dedicated thread rather than an EXECUTOR."
+  (declare (type function thunk))
   (make-thread
    (lambda ()
      (handler-case (deliver promise (funcall thunk))
@@ -188,5 +200,7 @@ package hands a thunk to a dedicated thread rather than an EXECUTOR."
    :name name)
   promise)
 
-(defun %future (thunk)
-  (%deliver-on-thread (make-promise) thunk :name "cl-concurrent-kit future"))
+(progn
+  (defun %future (thunk)
+    (%deliver-on-thread (make-promise) thunk :name "cl-concurrent-kit future"))
+  (declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1))))

@@ -13,7 +13,7 @@
 ;;;; directly on the same private waiter registration SELECT itself uses
 ;;;; (src/channel.lisp's %CHANNEL-ADD-WAITER/%CHANNEL-REMOVE-WAITER), so a
 ;;;; dynamic clause set still sleeps between probes instead of busy-polling.
-(in-package #:cl-concurrent-kit)
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defun %try-dynamic-select-clauses (clauses)
   "Try each of CLAUSES (a list of (CHANNEL . HANDLER) conses) once via
@@ -29,6 +29,9 @@ VALUE and RECEIVED-P, or (VALUES NIL NIL) if none are ready yet."
   "Fairly wait on CLAUSES (a list of (CHANNEL . HANDLER) conses) until one
 becomes ready, then return its HANDLER's result. Like SELECT, sleeps between
 probes via a private waiter semaphore rather than busy-polling."
+  (multiple-value-bind (result ready-p) (%try-dynamic-select-clauses clauses)
+    (when ready-p
+      (return-from %run-dynamic-select result)))
   (let ((waiter (make-semaphore)))
     (unwind-protect
         (progn
@@ -36,7 +39,8 @@ probes via a private waiter semaphore rather than busy-polling."
             (%channel-add-waiter (car clause) waiter +channel-notify-recv+))
           (loop
             (multiple-value-bind (result ready-p) (%try-dynamic-select-clauses clauses)
-              (when ready-p (return result)))
+              (when ready-p
+                (return result)))
             (wait-on-semaphore waiter)))
       (dolist (clause clauses)
         (%channel-remove-waiter (car clause) waiter)))))
@@ -400,3 +404,4 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
                           clauses))
                        (%run-dynamic-select clauses))))))
       :scope scope :executor executor :outputs (list output)))))
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

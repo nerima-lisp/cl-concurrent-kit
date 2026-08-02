@@ -180,3 +180,5 @@
       (expect (hash-table-count
                (cl-concurrent-kit::channel-waiters channel))
               :to-be 0))))
+
+(describe "channel ring-buffer invariants" (it "preserves FIFO order across repeated ring wraparound" (let ((channel (make-channel :buffer-size 3))) (dotimes (round 8) (let ((base (* round 3))) (send channel base) (send channel (1+ base)) (send channel (+ base 2)) (expect (recv channel) :to-be base) (expect (recv channel) :to-be (1+ base)) (expect (recv channel) :to-be (+ base 2)))))))

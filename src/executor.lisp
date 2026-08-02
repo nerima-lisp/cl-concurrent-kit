@@ -3,60 +3,81 @@
 ;;;; A fixed-size worker pool (Java's ExecutorService): SUBMIT hands a thunk
 ;;;; to whichever worker is free and returns a PROMISE for it immediately,
 ;;;; instead of PROMISE/FUTURE's one-thread-per-task cost.
-(in-package #:cl-concurrent-kit)
+(progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 ;;; An unbounded blocking queue for pending tasks. Deliberately not the
 ;;; public CHANNEL: CHANNEL's SEND applies backpressure once a bounded buffer
 ;;; fills, which SUBMIT should not do, and an unbuffered CHANNEL would make
 ;;; SUBMIT block until a worker is free to take it -- also not the contract
-;;; here. Reuses the shared FIFO utility (src/fifo.lisp).
-(defstruct (%work-queue (:constructor %make-work-queue (capacity)))
-  (lock (make-lock :name "cl-concurrent-kit executor queue") :read-only t)
-  (condition-variable (make-condition-variable :name "cl-concurrent-kit executor queue")
-                       :read-only t)
-  (fifo (make-fifo) :read-only t)
-  ;; NIL means unbounded -- the original, still-default behavior. Set via
-  ;; MAKE-EXECUTOR's :QUEUE-CAPACITY.
+;;; here. Uses a growable ring buffer to avoid per-submission allocation.
+(defstruct (%work-queue (:constructor %make-work-queue (capacity buffer)))
+  "Internal task queue used by EXECUTOR."
+  (lock (make-lock "cl-concurrent-kit executor queue") :read-only t)
+  (condition-variable (make-condition-variable) :read-only t)
+  (buffer nil :type (simple-array t (*)))
+  (head 0 :type fixnum)
+  (tail 0 :type fixnum)
+  ;; NIL means unbounded; otherwise submissions fail fast when full.
   (capacity nil :read-only t :type (or null (integer 1 *)))
-  (count 0 :type (integer 0 *))
-  (high-water-mark 0 :type (integer 0 *))
+  (count 0 :type (integer 0 #.most-positive-fixnum))
+  (high-water-mark 0 :type (integer 0 #.most-positive-fixnum))
   (closed-p nil))
 
 (defmacro %with-work-queue-lock ((queue) &body body)
   "Hold QUEUE's own lock for the dynamic extent of BODY."
   `(with-lock-held ((%work-queue-lock ,queue)) ,@body))
 
-(defun %work-queue-push (queue task)
-  "Enqueue TASK and return (VALUES T NIL), unless QUEUE has been closed or --
-with a bounded CAPACITY -- is already full, in which case this returns
-(VALUES NIL REASON) without enqueuing TASK, REASON being :CLOSED or :FULL.
-Reporting REASON here, rather than %SUBMIT re-checking QUEUE's state
-afterward to decide which condition to reject with, avoids a race where that
-second check could observe a state QUEUE was no longer in at the moment this
-decided to reject TASK."
-  (%with-work-queue-lock (queue)
-    (cond
-      ((%work-queue-closed-p queue) (values nil :closed))
-      ((and (%work-queue-capacity queue)
-            (>= (%work-queue-count queue) (%work-queue-capacity queue)))
-       (values nil :full))
-      (t
-       (fifo-push (%work-queue-fifo queue) task)
-       (setf (%work-queue-high-water-mark queue)
-             (max (%work-queue-high-water-mark queue)
-                  (incf (%work-queue-count queue))))
-       (condition-notify (%work-queue-condition-variable queue))
-       (values t nil)))))
+(progn
+  (defun %work-queue-grow (queue)
+    "Double QUEUE's ring while preserving FIFO order; called under its lock."
+    (let* ((old-buffer (%work-queue-buffer queue))
+           (old-length (length old-buffer))
+           (count (%work-queue-count queue))
+           (new-length (min (or (%work-queue-capacity queue) #.most-positive-fixnum)
+                            (* 2 old-length)))
+           (new-buffer (make-array new-length))
+           (old-index (%work-queue-head queue)))
+      (dotimes (index count)
+        (setf (aref new-buffer index) (aref old-buffer old-index)
+              old-index (if (= old-index (1- old-length)) 0 (1+ old-index))))
+      (setf (%work-queue-buffer queue) new-buffer
+            (%work-queue-head queue) 0
+            (%work-queue-tail queue) count)))
+
+  (defun %work-queue-push (queue task)
+    "Enqueue TASK without per-submission consing."
+    (%with-work-queue-lock (queue)
+      (cond
+        ((%work-queue-closed-p queue) (values nil :closed))
+        ((and (%work-queue-capacity queue)
+              (>= (%work-queue-count queue) (%work-queue-capacity queue)))
+         (values nil :full))
+        (t
+         (when (= (%work-queue-count queue) (length (%work-queue-buffer queue)))
+           (%work-queue-grow queue))
+         (let ((buffer (%work-queue-buffer queue))
+               (tail (%work-queue-tail queue)))
+           (setf (aref buffer tail) task
+                 (%work-queue-tail queue) (if (= tail (1- (length buffer))) 0 (1+ tail))))
+         (let ((count (incf (%work-queue-count queue))))
+           (when (> count (%work-queue-high-water-mark queue))
+             (setf (%work-queue-high-water-mark queue) count)))
+         (condition-notify (%work-queue-condition-variable queue))
+         (values t nil))))))
 
 (defun %work-queue-pop (queue)
   "Block until a task is available or QUEUE is closed and drained. Returns
 (VALUES TASK T) or (VALUES NIL NIL)."
   (%with-work-queue-lock (queue)
-    (loop until (or (not (fifo-empty-p (%work-queue-fifo queue))) (%work-queue-closed-p queue))
+    (loop until (or (plusp (%work-queue-count queue)) (%work-queue-closed-p queue))
           do (condition-wait (%work-queue-condition-variable queue) (%work-queue-lock queue)))
-    (if (fifo-empty-p (%work-queue-fifo queue))
+    (if (zerop (%work-queue-count queue))
         (values nil nil)
-        (let ((task (fifo-pop (%work-queue-fifo queue))))
+        (let* ((buffer (%work-queue-buffer queue))
+               (head (%work-queue-head queue))
+               (task (aref buffer head)))
+          (setf (aref buffer head) nil
+                (%work-queue-head queue) (if (= head (1- (length buffer))) 0 (1+ head)))
           (decf (%work-queue-count queue))
           (values task t)))))
 
@@ -187,29 +208,36 @@ attempting to cancel calls already running."
          (promises (make-array count)))
     (dotimes (index count)
       (when semaphore (wait-on-semaphore semaphore))
-      (let ((promise (submit executor (let ((item (aref items index)))
-                                         (lambda () (funcall function item))))))
-        (when semaphore
-          (promise-finally promise (lambda () (signal-semaphore semaphore))))
-        (setf (aref promises index) promise)))
+      (let ((thunk (let ((item (aref items index)))
+                     (lambda () (funcall function item)))))
+        (setf (aref promises index)
+              (if semaphore
+                  (%submit executor
+                            thunk
+                            :on-settle
+                            (lambda (state outcome)
+                              (declare (ignore state outcome))
+                              (signal-semaphore semaphore)))
+                  (submit executor thunk)))))
     (map 'list (function await) promises)))
 
 (defun make-executor (&key (size 4) (name "cl-concurrent-kit executor") queue-capacity)
-  "Create an executor backed by SIZE worker threads sharing one task queue.
-SUBMIT never blocks on backpressure -- with the optional QUEUE-CAPACITY, once
-that many tasks are already queued, SUBMIT instead rejects further work
-immediately (see SUBMIT and TRY-SUBMIT) rather than growing the queue or
-blocking. Call SHUTDOWN-EXECUTOR once no more work will be submitted so the
-workers can exit. If worker startup fails, already started workers are shut
-down before the creation error is re-signaled."
+  "Create an executor with SIZE worker threads.
+
+QUEUE-CAPACITY is NIL for an unbounded queue or a positive integer that makes
+SUBMIT fail fast with EXECUTOR-QUEUE-FULL when the queue is full."
   (check-type size (integer 1))
   (check-type queue-capacity (or null (integer 1 *)))
-  (let ((queue (%make-work-queue queue-capacity))
+  (let ((queue (%make-work-queue queue-capacity
+                                 (make-array (if queue-capacity
+                                                 (min queue-capacity 64)
+                                                 64))))
         (threads nil))
     (handler-case
         (progn
           (loop repeat size
-                do (push (make-thread (lambda () (%worker-loop queue)) :name name)
+                do (push (make-thread (lambda () (%executor-worker-loop queue))
+                                      :name name)
                          threads))
           (%make-executor queue (nreverse threads)))
       (error (condition)
@@ -263,17 +291,5 @@ down before the creation error is re-signaled."
                                    :capacity (executor-queue-capacity executor))))))
       (values promise task accepted-p))))
 
-(defun %work-queue-close (executor cancel-pending)
-  (let ((queue (executor-queue executor))
-        cancelled-tasks)
-    (%with-work-queue-lock (queue)
-      (when cancel-pending
-        (setf cancelled-tasks (fifo-detach (%work-queue-fifo queue))
-              (%work-queue-count queue) 0))
-      (setf (%work-queue-closed-p queue) t)
-      (condition-broadcast (%work-queue-condition-variable queue)))
-    (when cancelled-tasks
-      (let ((condition (make-condition 'executor-shut-down :executor executor)))
-        (loop for task = (fifo-pop cancelled-tasks)
-              while task
-              do (%executor-task-cancel task condition))))))
+(defun %work-queue-close (executor cancel-pending) "Close EXECUTOR queue and cancel pending tasks outside its lock." (let ((queue (executor-queue executor)) (cancelled-buffer nil) (cancelled-head 0) (cancelled-count 0)) (%with-work-queue-lock (queue) (when (and cancel-pending (plusp (%work-queue-count queue))) (setf cancelled-buffer (%work-queue-buffer queue) cancelled-head (%work-queue-head queue) cancelled-count (%work-queue-count queue) (%work-queue-count queue) 0 (%work-queue-head queue) 0 (%work-queue-tail queue) 0)) (setf (%work-queue-closed-p queue) t) (condition-broadcast (%work-queue-condition-variable queue))) (when cancelled-buffer (let ((condition (make-condition (quote executor-shut-down) :executor executor)) (buffer-length (length cancelled-buffer)) (index cancelled-head)) (dotimes (offset cancelled-count) (declare (ignore offset)) (let ((task (aref cancelled-buffer index))) (setf (aref cancelled-buffer index) nil index (if (= index (1- buffer-length)) 0 (1+ index))) (%executor-task-cancel task condition)))))))
+(declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))
