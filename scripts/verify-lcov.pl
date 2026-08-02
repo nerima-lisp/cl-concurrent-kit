@@ -51,7 +51,9 @@ my %non_executable_da = map { $_ => 1 } qw(
   promise-combinators.lisp:85 promise-combinators.lisp:86 promise-combinators.lisp:87 promise-combinators.lisp:88 promise-combinators.lisp:89
   promise-combinators.lisp:90 promise-combinators.lisp:91 promise-combinators.lisp:92 promise-combinators.lisp:93 promise-combinators.lisp:94
   promise-combinators.lisp:95 promise-combinators.lisp:96 promise-combinators.lisp:97 promise-combinators.lisp:98 promise-combinators.lisp:99
-  promise-combinators.lisp:100
+  promise-combinators.lisp:100 promise-combinators.lisp:101 promise-combinators.lisp:102 promise-combinators.lisp:103 promise-combinators.lisp:104
+  promise-combinators.lisp:105 promise-combinators.lisp:106 promise-combinators.lisp:107 promise-combinators.lisp:108 promise-combinators.lisp:109
+  promise-combinators.lisp:110
   channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13 channel.lisp:14
   channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19 channel.lisp:20
   channel.lisp:21 channel.lisp:22 channel.lisp:23 channel.lisp:24 channel.lisp:25
@@ -112,7 +114,7 @@ my %non_executable_da = map { $_ => 1 } qw(
   scope-execution.lisp:8
   scope.lisp:22
   stream.lisp:15 stream.lisp:115 stream.lisp:123 stream.lisp:134 stream.lisp:145
-  stream.lisp:154 stream.lisp:173 stream.lisp:227 stream.lisp:237 stream.lisp:262
+  stream.lisp:154 stream.lisp:173 stream.lisp:229 stream.lisp:239 stream.lisp:264
   stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:38 stream-fan-out.lisp:61 stream-fan-out.lisp:77
   stream-fan-out.lisp:96
   stream-fan-in.lisp:16 stream-fan-in.lisp:18 stream-fan-in.lisp:28 stream-fan-in.lisp:48 stream-fan-in.lisp:59
@@ -121,7 +123,7 @@ my %non_executable_da = map { $_ => 1 } qw(
   stream-fan-in.lisp:70 stream-fan-in.lisp:71 stream-fan-in.lisp:72 stream-fan-in.lisp:73 stream-fan-in.lisp:74
   stream-fan-in.lisp:75 stream-fan-in.lisp:76 stream-fan-in.lisp:78 stream-fan-in.lisp:94 stream-fan-in.lisp:105
   stream-fan-in.lisp:123 stream-fan-in.lisp:139 stream-fan-in.lisp:164 stream-fan-in.lisp:199 stream-fan-in.lisp:238
-  stream-map-concurrent.lisp:8 stream-map-concurrent.lisp:10 stream-map-concurrent.lisp:22 stream-map-concurrent.lisp:120 stream-map-concurrent.lisp:187
+  stream-map-concurrent.lisp:8 stream-map-concurrent.lisp:10 stream-map-concurrent.lisp:22 stream-map-concurrent.lisp:120 stream-map-concurrent.lisp:191
   stream-partition.lisp:6 stream-partition.lisp:8
 );
 my %seen_non_executable_da;

@@ -198,30 +198,32 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
             ;; again to redeliver an already-sent PENDING-VALUE into a
             ;; channel nothing is still draining, and hanging forever.
             (block debounce
-              (loop
-                (when scope (check-cancelled scope))
-                (if pending-p
-                    (select
-                      ((recv input) (value)
-                       ;; SELECT's RECV clause binds only VALUE, unlike plain
-                       ;; RECV's own (VALUES VALUE RECEIVED-P) -- it fires
-                       ;; alike for a genuinely received value and for INPUT
-                       ;; closed-and-drained (VALUE then NIL), with no
-                       ;; RECEIVED-P of its own to tell them apart. A NIL
-                       ;; VALUE while INPUT is already closed is therefore
-                       ;; taken as "no more values are coming" and flushes
-                       ;; PENDING-VALUE -- ambiguous only for a channel that
-                       ;; deliberately sends NIL as a real value, which
-                       ;; CHANNEL-DEBOUNCE does not support distinguishing.
-                       (if (and (null value) (channel-closed-p input))
-                           (progn (send output pending-value) (return-from debounce))
-                           (setf pending-value value)))
-                      (:timeout interval ()
-                       (send output pending-value)
-                       (setf pending-p nil)))
-                    (multiple-value-bind (value received-p) (recv input)
-                      (unless received-p (return-from debounce))
-                      (setf pending-value value pending-p t))))))))
+              (labels ((wait-for-first-value ()
+                         (multiple-value-bind (value received-p) (recv input)
+                           (unless received-p (return-from debounce))
+                           (setf pending-value value pending-p t)))
+                       (wait-for-quiet-or-flush ()
+                         (select
+                           ((recv input) (value)
+                            ;; SELECT's RECV clause binds only VALUE, unlike plain
+                            ;; RECV's own (VALUES VALUE RECEIVED-P) -- it fires
+                            ;; alike for a genuinely received value and for INPUT
+                            ;; closed-and-drained (VALUE then NIL), with no
+                            ;; RECEIVED-P of its own to tell them apart. A NIL
+                            ;; VALUE while INPUT is already closed is therefore
+                            ;; taken as "no more values are coming" and flushes
+                            ;; PENDING-VALUE -- ambiguous only for a channel that
+                            ;; deliberately sends NIL as a real value, which
+                            ;; CHANNEL-DEBOUNCE does not support distinguishing.
+                            (if (and (null value) (channel-closed-p input))
+                                (progn (send output pending-value) (return-from debounce))
+                                (setf pending-value value)))
+                           (:timeout interval ()
+                            (send output pending-value)
+                            (setf pending-p nil)))))
+                (loop
+                  (when scope (check-cancelled scope))
+                  (if pending-p (wait-for-quiet-or-flush) (wait-for-first-value))))))))
       :scope scope :executor executor :outputs (list output)))))
 
 (defun channel-flat-map (function input &key (buffer-size 0) scope executor)

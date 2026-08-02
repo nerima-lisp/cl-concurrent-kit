@@ -82,22 +82,32 @@ being called at all is enough to win."
   `(%unless-decided (,lock ,decided-place) (setf ,decided-place t)))
 
 (defmacro %with-race-cleanup ((lock decided count promises observers) &body body)
-  "Establish DECIDED-P and STOP-OBSERVING-OTHERS as local functions for BODY,
-reaching LOCK, DECIDED, COUNT, PROMISES, and OBSERVERS by name from the
-caller's own lexical scope -- the anaphor is deliberate, the same shape
-%DEFINE-KIT-CONDITION's CONDITION already establishes for a :REPORT clause.
-DECIDED-P reads DECIDED under LOCK. STOP-OBSERVING-OTHERS (EXCEPT-INDEX)
-unregisters every observer in OBSERVERS from its own entry in PROMISES except
-the one at EXCEPT-INDEX -- the winning input, whose own observer a caller
-might still need to unregister separately once DECIDED-P is true. Shared by
-PROMISE-ALL and PROMISE-ANY below, which race COUNT promises identically and
-differ only in what a fulfilled or failed input means for each."
+  "Establish DECIDED-P, STOP-OBSERVING-OTHERS, and REGISTER-OBSERVER as local
+functions for BODY, reaching LOCK, DECIDED, COUNT, PROMISES, and OBSERVERS by
+name from the caller's own lexical scope -- the anaphor is deliberate, the
+same shape %DEFINE-KIT-CONDITION's CONDITION already establishes for a
+:REPORT clause. DECIDED-P reads DECIDED under LOCK. STOP-OBSERVING-OTHERS
+(EXCEPT-INDEX) unregisters every observer in OBSERVERS from its own entry in
+PROMISES except the one at EXCEPT-INDEX -- the winning input, whose own
+observer a caller might still need to unregister separately once DECIDED-P is
+true. REGISTER-OBSERVER (INDEX OBSERVER) stores OBSERVER at INDEX, subscribes
+it to PROMISES's own entry there, and immediately unsubscribes it again if the
+race was already decided by the time %OBSERVE-PROMISE returned -- closing the
+window between an input settling synchronously inside that call and this
+caller finding out the race is over. Shared by PROMISE-ALL and PROMISE-ANY
+below, which race COUNT promises identically and differ only in what a
+fulfilled or failed input means for each."
   `(flet ((decided-p () (with-lock-held (,lock) ,decided))
           (stop-observing-others (except-index)
             (dotimes (i ,count)
               (unless (= i except-index)
                 (%unobserve-promise (aref ,promises i) (aref ,observers i))))))
-     ,@body))
+     (flet ((register-observer (index observer)
+              (setf (aref ,observers index) observer)
+              (%observe-promise (aref ,promises index) observer)
+              (when (decided-p)
+                (%unobserve-promise (aref ,promises index) observer))))
+       ,@body)))
 
 (defun promise-race (promises)
   "Return a PROMISE that settles the same way -- fulfilled or failed -- as
@@ -208,25 +218,22 @@ NIL."
               (observers (make-array count :initial-element nil)))
           (%with-race-cleanup (lock decided count promises observers)
             (dotimes (index count)
-              (let* ((index index)
-                     (observer
-                       (lambda (state outcome)
-                         (ecase state
-                           (:fulfilled
-                            (when (%unless-decided (lock decided)
-                                    (setf (aref values index) outcome)
-                                    (let ((complete-p (zerop (decf remaining))))
-                                      (when complete-p (setf decided t))
-                                      complete-p))
-                              (%deliver-if-pending result (coerce values 'list))))
-                           (:failed
-                            (when (%decide-once lock decided)
-                              (stop-observing-others index)
-                              (%deliver-error-if-pending result outcome)))))))
-                (setf (aref observers index) observer)
-                (%observe-promise (aref promises index) observer)
-                (when (decided-p)
-                  (%unobserve-promise (aref promises index) observer)))))))
+              (let ((index index))
+                (register-observer
+                 index
+                 (lambda (state outcome)
+                   (ecase state
+                     (:fulfilled
+                      (when (%unless-decided (lock decided)
+                              (setf (aref values index) outcome)
+                              (let ((complete-p (zerop (decf remaining))))
+                                (when complete-p (setf decided t))
+                                complete-p))
+                        (%deliver-if-pending result (coerce values 'list))))
+                     (:failed
+                      (when (%decide-once lock decided)
+                        (stop-observing-others index)
+                        (%deliver-error-if-pending result outcome)))))))))))
     result))
 
 (defun promise-any (promises)
@@ -249,28 +256,25 @@ PROMISE-RACE -- if PROMISES is empty."
            (observers (make-array count :initial-element nil)))
       (%with-race-cleanup (lock decided count promises observers)
         (dotimes (index count)
-          (let* ((index index)
-                 (observer
-                   (lambda (state outcome)
-                     (ecase state
-                       (:fulfilled
-                        (when (%decide-once lock decided)
-                          (stop-observing-others index)
-                          (%deliver-if-pending result outcome)))
-                       (:failed
-                        (let ((causes (%unless-decided (lock decided)
-                                        (setf (aref failures index) outcome)
-                                        (when (zerop (decf remaining))
-                                          (setf decided t)
-                                          (coerce failures 'list)))))
-                          (when causes
-                            (%deliver-error-if-pending
-                             result
-                             (make-condition 'promise-all-failed :causes causes)))))))))
-            (setf (aref observers index) observer)
-            (%observe-promise (aref promises index) observer)
-            (when (decided-p)
-              (%unobserve-promise (aref promises index) observer)))))
+          (let ((index index))
+            (register-observer
+             index
+             (lambda (state outcome)
+               (ecase state
+                 (:fulfilled
+                  (when (%decide-once lock decided)
+                    (stop-observing-others index)
+                    (%deliver-if-pending result outcome)))
+                 (:failed
+                  (let ((causes (%unless-decided (lock decided)
+                                  (setf (aref failures index) outcome)
+                                  (when (zerop (decf remaining))
+                                    (setf decided t)
+                                    (coerce failures 'list)))))
+                    (when causes
+                      (%deliver-error-if-pending
+                       result
+                       (make-condition 'promise-all-failed :causes causes)))))))))))
       result)))
 
 (defun promise-timeout (promise timeout)

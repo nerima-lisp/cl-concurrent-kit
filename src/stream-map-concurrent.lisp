@@ -161,24 +161,28 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
             (let ((submitted 0)
                   (completed 0)
                   (input-closed-p nil))
-              (unwind-protect
-                  (loop
-                    (when scope (check-cancelled scope))
+              (labels ((fill-jobs ()
+                         ;; Keep up to PARALLELISM jobs in flight until INPUT closes.
+                         (loop
+                           while (and (not input-closed-p) (< (- submitted completed) parallelism))
+                           do (multiple-value-bind (value received-p) (recv input)
+                                (if received-p
+                                    (progn (send jobs value) (incf submitted))
+                                    (setf input-closed-p t)))))
+                       (collect-one-result ()
+                         (destructuring-bind (kind value) (recv results)
+                           (incf completed)
+                           (if (eq kind :error)
+                               (error value)
+                               (send output value)))))
+                (unwind-protect
                     (loop
-                      while (and (not input-closed-p) (< (- submitted completed) parallelism))
-                      do (multiple-value-bind (value received-p) (recv input)
-                           (if received-p
-                               (progn (send jobs value) (incf submitted))
-                               (setf input-closed-p t))))
-                    (cond
-                      ((< completed submitted)
-                       (destructuring-bind (kind value) (recv results)
-                         (incf completed)
-                         (if (eq kind :error)
-                             (error value)
-                             (send output value))))
-                      (input-closed-p (return))))
-                (close-channel jobs))
+                      (when scope (check-cancelled scope))
+                      (fill-jobs)
+                      (cond
+                        ((< completed submitted) (collect-one-result))
+                        (input-closed-p (return))))
+                  (close-channel jobs)))
               (unless scope
                 (dolist (worker-completion worker-completions)
                   (await worker-completion))))))

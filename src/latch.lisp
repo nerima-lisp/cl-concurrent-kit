@@ -135,23 +135,26 @@ BARRIER-BROKEN. Call RESET-BARRIER before BARRIER can be used again."
               (let ((generation (%barrier-generation barrier))
                     (arrival-index (%barrier-waiting barrier)))
                 (incf (%barrier-waiting barrier))
-                (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
-                    (progn
-                      (setf (%barrier-waiting barrier) 0)
-                      (incf (%barrier-generation barrier))
-                      (condition-broadcast (%barrier-condition-variable barrier))
-                      0)
-                    (%with-deadline-wait (result (%barrier-condition-variable barrier)
-                                          (%barrier-lock barrier)
-                                          (%deadline-from-timeout timeout) timeout :await-barrier)
-                        (progn
-                          (when scope (check-cancelled scope))
-                          (cond
-                            ((eql generation (%barrier-last-broken-generation barrier)) :broken)
-                            ((/= generation (%barrier-generation barrier)) :advanced)))
-                      (ecase result
-                        (:broken (error 'barrier-broken :barrier barrier))
-                        (:advanced (1+ arrival-index)))))))
+                (flet ((release-as-last-party ()
+                         (setf (%barrier-waiting barrier) 0)
+                         (incf (%barrier-generation barrier))
+                         (condition-broadcast (%barrier-condition-variable barrier))
+                         0)
+                       (wait-for-release ()
+                         (%with-deadline-wait (result (%barrier-condition-variable barrier)
+                                               (%barrier-lock barrier)
+                                               (%deadline-from-timeout timeout) timeout :await-barrier)
+                             (progn
+                               (when scope (check-cancelled scope))
+                               (cond
+                                 ((eql generation (%barrier-last-broken-generation barrier)) :broken)
+                                 ((/= generation (%barrier-generation barrier)) :advanced)))
+                           (ecase result
+                             (:broken (error 'barrier-broken :barrier barrier))
+                             (:advanced (1+ arrival-index))))))
+                  (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
+                      (release-as-last-party)
+                      (wait-for-release)))))
           ((or task-cancelled operation-timed-out) (condition)
             (with-lock-held ((%barrier-lock barrier)) (%break-barrier barrier))
             (error condition)))
