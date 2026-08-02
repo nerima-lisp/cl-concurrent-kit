@@ -271,6 +271,61 @@ function for readability could not be allowed to also move any of this code
 from interpreted to compiled, so the split stayed inside the one `EVAL`'d
 `PROGN` rather than becoming ordinary top-level `DEFUN`s.
 
+## The high-complexity readability pass
+
+A byte-span ranking of every `DEFUN`/`DEFMACRO` in `src/` once put nine
+functions well above the rest. Each was read individually and either
+genuinely restructured or deliberately left alone, on a case-by-case
+judgment rather than a mechanical "split everything over N bytes" rule:
+
+- `CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED`
+  (`src/stream-map-concurrent.lisp`) each had one dispatch loop mixing job
+  submission, result collection, and (for the ordered variant) output
+  reordering inline. Both now name their two or three concerns as `LABELS`
+  functions (`FILL-JOBS`, `COLLECT-ONE-RESULT`, and
+  `CHANNEL-MAP-CONCURRENT`'s own `DRAIN-READY-OUTPUTS`), leaving the
+  top-level loop as a short, named sequence instead of a nested
+  `LOOP`/`COND`/`DESTRUCTURING-BIND`.
+- `CHANNEL-DEBOUNCE` (`src/stream.lisp`) had its two states -- waiting for a
+  first value, versus waiting out quiet time or flushing one -- written as
+  the two branches of one inline `IF` inside `SELECT`. They are now
+  `WAIT-FOR-FIRST-VALUE` and `WAIT-FOR-QUIET-OR-FLUSH`, named functions
+  the loop dispatches between.
+- `AWAIT-BARRIER` (`src/latch.lisp`) had "I am the last party to arrive" and
+  "I must wait" as an inline `IF`'s two branches; they are now
+  `RELEASE-AS-LAST-PARTY` and `WAIT-FOR-RELEASE`.
+- `PROMISE-ALL` and `PROMISE-ANY` (`src/promise-combinators.lisp`) each
+  repeated the same three-step "store the observer, subscribe it, unsubscribe
+  it again if the race was already decided by the time `%OBSERVE-PROMISE`
+  returned" around their own differing observer closures. `%WITH-RACE-CLEANUP`
+  -- the macro both already shared for `DECIDED-P` and
+  `STOP-OBSERVING-OTHERS` -- gained a third anaphoric local function,
+  `REGISTER-OBSERVER`, so neither function repeats it.
+- `PROMISE-ALL-SETTLED` had its `STATE`/`OUTCOME` pair to `PROMISE-SETTLEMENT`
+  mapping written inline inside the per-input observer; `%PROMISE-SETTLEMENT-FOR`
+  now names that mapping as its own function, and `RECORD-SETTLEMENT` names
+  the per-input registration step.
+- `PROMISE-TIMEOUT` had its race's two sides -- react to `PROMISE` settling,
+  react to the timer firing first -- as two inline `LAMBDA`s; they are now
+  `ON-PROMISE-SETTLED` and `RUN-TIMER`.
+- `WITH-TASK-SCOPE` (`src/scope.lisp`) had an await-then-cancel-on-timeout
+  `HANDLER-CASE` inline in its expansion, alongside the macro's own
+  close-then-maybe-cancel-on-abnormal-exit logic. That `HANDLER-CASE` never
+  touches `BODY` and so never needed to run inline; it is now
+  `%SCOPE-AWAIT-CHILDREN-OR-CANCEL`, an ordinary function in
+  `src/scope-state.lisp` alongside `%SCOPE-AWAIT-CHILDREN` itself. The
+  macro's own expansion shrinks to the two concerns that truly require
+  running inline with `BODY`: closing the scope and conditionally cancelling
+  it.
+- `WITH-TIMEOUT`'s `%CALL-WITH-TIMEOUT` (`src/timeout.lisp`) is the one
+  left unchanged. Its `HANDLER-BIND` clause is already the minimal shape
+  SB-EXT:TIMEOUT's translation needs -- a three-line predicate that must stay
+  lexically inside `(BLOCK ATTEMPT ...)` because it calls `RETURN-FROM
+  ATTEMPT`. Naming it as a separate function would either move that
+  `RETURN-FROM` somewhere it can no longer reach `ATTEMPT`, or add a thin
+  wrapper around it purely to satisfy a byte-count ranking -- renaming the
+  code without clarifying it.
+
 ## Variable-arity SELECT for stream fan-in
 
 `SELECT` (`src/select.lisp`) is a macro: its clause count and shape must be
