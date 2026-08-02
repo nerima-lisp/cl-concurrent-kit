@@ -189,7 +189,9 @@
                 # paths must be on the source registry too -- see the
                 # :inherit-configuration source-registry form in
                 # benchmarks/run-benchmarks.lisp.
-                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli.packages.${ctx.system}.cl-cli}//";
+                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
+                  cl-cli.packages.${ctx.system}.cl-cli
+                }//";
               }
               ''
                 export HOME="$TMPDIR/home"
@@ -209,7 +211,9 @@
                 ];
                 text = ''
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli.packages.${ctx.system}.cl-cli}//"
+                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${
+                    cl-cli.packages.${ctx.system}.cl-cli
+                  }//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })
