@@ -29,6 +29,17 @@
       url = "github:numtide/treefmt-nix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # cl-cli is a benchmark-tooling-only dependency, reached the same way
+    # cl-weave is: through benchmarkScript's CL_SOURCE_REGISTRY below, never
+    # through cl-concurrent-kit's own lispDependencies. It gives
+    # benchmarks/run-benchmarks.lisp real --only/SCALE argument parsing,
+    # replacing two arguments (checks.benchmark's positional "1",
+    # apps.benchmark's forwarded "$@") the script used to silently ignore.
+    cl-cli = {
+      url = "github:nerima-lisp/cl-cli/v1.1.0";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -38,6 +49,7 @@
       cl-nix-forge,
       cl-weave,
       treefmt-nix,
+      cl-cli,
       ...
     }:
     let
@@ -162,7 +174,8 @@
           # suite over the primitives this branch's perf work targets
           # (atomic counters, buffered channels, SELECT, the executor).
           # checks.benchmark only smoke-tests that it still runs and reports
-          # sane numbers; it is not a performance gate.
+          # sane numbers; it is not a performance gate -- SCALE 0.1 keeps it
+          # fast without leaving the --ONLY/SCALE argument path unexercised.
           checks.benchmark =
             pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
               {
@@ -171,16 +184,17 @@
                   pkgs.coreutils
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-                # cl-weave:benchmark is loaded directly by the script (not
-                # just the test system), so its own store path must be on
-                # the source registry too -- see the :inherit-configuration
-                # source-registry form in benchmarks/run-benchmarks.lisp.
-                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//";
+                # cl-weave:benchmark and cl-cli are loaded directly by the
+                # script (not just the test system), so their own store
+                # paths must be on the source registry too -- see the
+                # :inherit-configuration source-registry form in
+                # benchmarks/run-benchmarks.lisp.
+                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli.packages.${ctx.system}.cl-cli}//";
               }
               ''
                 export HOME="$TMPDIR/home"
                 mkdir -p "$HOME"
-                timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 1 > "$out"
+                timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 0.1 > "$out"
                 test -s "$out"
               '';
 
@@ -195,7 +209,7 @@
                 ];
                 text = ''
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//"
+                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli.packages.${ctx.system}.cl-cli}//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })

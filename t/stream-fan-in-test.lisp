@@ -152,7 +152,26 @@
         (multiple-value-bind (output completion) (channel-merge (list a b) :scope scope)
           (expect (sort (drain-channel output :timeout 1) (function <))
                   :to-equal (list 1 2))
-          (await completion :timeout 1))))))
+          (await completion :timeout 1)))))
+
+  (it-fuzz "merges any number of already-closed channels without hanging, preserving total count"
+      ((per-channel-values
+         (gen-list (gen-list (gen-integer :min 0 :max 100) :min-length 0 :max-length 5)
+                   :min-length 1 :max-length 4)))
+      ()
+    (let ((channels (mapcar (lambda (values)
+                               (let ((channel (make-channel :buffer-size (max 1 (length values)))))
+                                 (dolist (value values) (send channel value))
+                                 (close-channel channel)
+                                 channel))
+                             per-channel-values)))
+      (multiple-value-bind (output completion) (channel-merge channels)
+        (let ((merged (drain-channel output :timeout 2))
+              (expected-count (reduce (function +) per-channel-values :key (function length))))
+          (unless (= (length merged) expected-count)
+            (error "expected ~D merged values from ~D channels, got ~D"
+                   expected-count (length channels) (length merged)))
+          (await completion :timeout 2))))))
 
 (describe "channel-zip"
   (it "combines one value from every input into ordered tuples"

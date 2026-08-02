@@ -138,4 +138,18 @@
         (multiple-value-bind (output completion) (channel-batch 2 input :scope scope)
           (expect (drain-channel output :timeout 1)
                   :to-equal (list (list 1 2) (list 3 4)))
+          (await completion :timeout 1)))))
+
+  (it-property "reassembles into the original list for any SIZE, with every batch but the last exactly SIZE long"
+      ((values (gen-list (gen-integer :min -1000 :max 1000) :min-length 0 :max-length 32))
+       (size (gen-integer :min 1 :max 8)))
+    (let ((input (make-channel :buffer-size (max 1 (length values)))))
+      (dolist (value values) (send input value))
+      (close-channel input)
+      (multiple-value-bind (output completion) (channel-batch size input)
+        (let ((batches (drain-channel output :timeout 1)))
+          (with-soft-assertions
+            (expect (apply (function append) batches) :to-equal values)
+            (expect (every (lambda (batch) (<= (length batch) size)) batches) :to-be-truthy)
+            (expect (every (lambda (batch) (= (length batch) size)) (butlast batches)) :to-be-truthy))
           (await completion :timeout 1))))))

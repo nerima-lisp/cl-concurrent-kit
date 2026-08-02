@@ -3,7 +3,7 @@
   (:shadowing-import-from #:cl-weave #:describe)
   (:import-from #:cl-weave
    #:it #:expect #:signals #:run-all
-   #:it-property #:gen-integer #:gen-list #:gen-boolean
+   #:it-property #:it-fuzz #:gen-integer #:gen-list #:gen-boolean
    #:with-continuation-result #:with-soft-assertions)
   (:import-from #:cl-concurrent-kit
    ;; Threads / locks / condition variables / semaphores / atomics

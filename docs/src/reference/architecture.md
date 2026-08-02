@@ -18,16 +18,21 @@ SBCL already ships over adding a dependency for it, org-wide. This project's
 own `.asd` `:description` states the consequence directly -- "Dependency-free,
 SBCL-only" -- and `:depends-on ()` on `cl-concurrent-kit` itself (as opposed
 to `cl-concurrent-kit/test`, which depends on `cl-weave`) is that sentence
-enforced, not just claimed. Two nerima-lisp packages are already used
+enforced, not just claimed. Three nerima-lisp packages are already used
 elsewhere in this repository, deliberately kept out of that runtime
 dependency list: `cl-weave` for the test suite (`cl-concurrent-kit/test`'s
-own `:depends-on`, never `cl-concurrent-kit`'s) and `cl-nix-forge` for
-`flake.nix`'s packaging, neither reachable from a consumer that only loads
-the library. Adding a further nerima-lisp package as a *runtime* dependency
--- `cl-log-kit`, say, for the one `(format *error-output* ...)` call in
-`src/executor.lisp`'s worker loop -- would contradict that `:description`
-outright for a single call site, the textbook shape of the adapter this
-project's own instructions ask not to build.
+own `:depends-on`, never `cl-concurrent-kit`'s), `cl-cli` for
+`benchmarks/run-benchmarks.lisp`'s argument parsing (reached only through
+`flake.nix`'s `CL_SOURCE_REGISTRY` for that one script, the same way
+`cl-weave` is), and `cl-nix-forge` for `flake.nix`'s own packaging --
+none reachable from a consumer that only loads the library. Adding a
+further nerima-lisp package as a *runtime* dependency -- `cl-log-kit`, say,
+for the one `(format *error-output* ...)` call in `src/executor.lisp`'s
+worker loop -- would contradict that `:description` outright for a single
+call site, the textbook shape of the adapter this project's own
+instructions ask not to build. Benchmark tooling and the test suite face no
+such objection: neither ships to, nor is reachable from, a consumer that
+only depends on `cl-concurrent-kit` itself.
 
 The rest of the org's catalog (checked against
 [github.com/orgs/nerima-lisp/repositories](https://github.com/orgs/nerima-lisp/repositories)
@@ -437,6 +442,73 @@ watching for completion is actually synchronizing with. See "The unbuffered
 channel is a real rendezvous" and "This continuation-passing composition is
 deliberately not how `src/channel.lisp`'s `SEND`/`RECV` work" above for the
 two places this project has already had to defend that line explicitly.
+
+## Which shapes become a DEFMACRO, and which stay a DEFUN
+
+`src/` currently defines 20 macros against 145 functions: `%WITH-CHANNEL-LOCK`,
+`%CHANNEL-NOTIFY`, `%DEFINE-KIT-CONDITION`, `%WITH-WORK-QUEUE-LOCK`,
+`WITH-EXECUTOR`, `WITH-LOCK-HELD`, `%WAIT-UNTIL`, `%WITH-DEADLINE-WAIT`,
+`%WITH-SCOPE-LOCK`, `%UNLESS-DECIDED`, `%DECIDE-ONCE`, `%WITH-RACE-CLEANUP`,
+`WITH-TASK-SCOPE`, `%WITH-CHANNEL-LIST-STAGE`, `%WITH-CLOSED-STAGE-OUTPUTS`,
+`CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`, `SELECT`, and
+`WITH-TIMEOUT`. That ratio is not an oversight to correct toward more
+macros; it reflects a specific, checkable criterion for which shape a given
+piece of code needs.
+
+A macro earns its place here for one of two reasons. Either it needs
+`BODY` unevaluated -- an unwind-protected critical section
+(`%WITH-CHANNEL-LOCK`, `%WITH-SCOPE-LOCK`, `%WITH-DEADLINE-WAIT`), a
+resource-scoped binding (`WITH-EXECUTOR`, `WITH-TASK-SCOPE`,
+`WITH-TIMEOUT`, `CHANNEL-PRODUCER`), or a loop skeleton whose per-iteration
+work varies by caller (`%CONSUME-CHANNEL`, `%WITH-RACE-CLEANUP`) -- none of
+which a function can express, since a function's arguments are evaluated
+before it ever runs. Or its clause/branch shape is known at compile time
+and inlining it avoids a real runtime cost: `SELECT` expands every clause's
+`TRY-SEND`/`TRY-RECV` probe directly into its expansion specifically so
+choosing a ready clause is a direct call, not a dispatch through a stored
+handler vector (see "SELECT sleeps; it does not poll" above).
+
+Neither reason applies to most of the other 145. `src/stream-fan-in.lisp`'s
+`%RUN-DYNAMIC-SELECT` is the clearest negative case: it exists *because*
+`SELECT`'s macro-fixed clause count cannot express a multiplexer over a
+channel list whose length is only known at runtime, so making it a macro
+would delete the one capability it was written to have. The same argument
+covers ordinary data-shaped operations throughout `src/channel.lisp`,
+`src/promise.lisp`, `src/executor.lisp`, and the stream stage functions:
+`CHANNEL-MERGE`'s channel list, `CHANNEL-BATCH`'s `SIZE`, and
+`EXECUTOR-MAP`'s `MAX-IN-FLIGHT` are all runtime values a macro's
+compile-time expansion has no access to. Converting these to macros would
+not add a capability; it would only remove the one a function already
+provides -- ordinary argument evaluation -- for no benefit, which is
+exactly the "macro-first" antipattern On Lisp itself warns against under a
+different name.
+
+## Where data is kept separate from the logic that processes it
+
+Three concrete places this separation is already load-bearing, not just
+aspirational: `src/package.lisp`'s `:EXPORT` list is a flat list of keyword
+symbols -- pure data, with zero logic mixed into it, and it is the entire
+definition of this library's public API surface (see "Stability" in
+[Compatibility](compatibility.md)). `src/conditions.lisp`'s thirteen
+conditions are each a `%DEFINE-KIT-CONDITION` call supplying only what
+varies -- a name, a list of `(SLOT-NAME DOCUMENTATION)` data tuples, a
+`:REPORT` format string, and its format arguments -- with the reader-naming
+convention, the `:INITARG` derivation, and the `CL-CONCURRENT-KIT-ERROR`
+subclassing written once in the macro rather than repeated per condition
+(see that file's own header comment). `benchmarks/run-benchmarks.lisp`'s
+`%REPORT-BENCHMARK` separates the one piece of logic every benchmark
+shares (running `cl-weave:benchmark` and formatting `median-ms`/`mean-ms`/
+`minimum-ms`/`maximum-ms`) from the data that varies per call -- a name
+string and a body form -- rather than repeating the `FORMAT` call at each
+of the file's nine benchmarks.
+
+Where this split does *not* appear -- `%SELECT-PARSE-CLAUSES`'s clause
+dispatch, `%CHANNEL-ADD-WAITER`'s interest-bit bookkeeping -- the "data"
+side of a hypothetical split would be nothing but small closures over
+lexical state (a value transform, a comparison, a callback), which a data
+table would need to hold as data anyway; splitting further would move the
+same logic sideways into the table's payload rather than actually
+separating it from anything.
 
 ## Why SPEED 0, and why in the .asd rather than a DECLAIM
 

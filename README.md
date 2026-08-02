@@ -88,7 +88,11 @@ the org's test framework.
 primitive's own round-trip overhead (channel send/recv, promise
 deliver/await, executor submit/await, scope spawn/await, ...) using
 cl-weave's `benchmark`, the same tool the org's other repositories use, so
-the numbers are directly comparable across them.
+the numbers are directly comparable across them. Argument parsing is
+[cl-cli](https://github.com/nerima-lisp/cl-cli): `-- --only channel` runs
+only the benchmarks whose name contains `channel`, and a trailing number
+(`-- 0.1`) scales every benchmark's own iteration count by that factor,
+for a quick pass instead of the full suite.
 
 ## Contributing
 
