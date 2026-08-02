@@ -11,7 +11,7 @@
     # output table (packages/checks/apps/devShells/formatter/overlays) from
     # one mkPackageFlake call below, instead of hand-rolling each of them.
     cl-nix-forge = {
-      url = "github:nerima-lisp/cl-nix-forge/v0.4.0";
+      url = "github:nerima-lisp/cl-nix-forge/v0.4.1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -21,7 +21,7 @@
     # lispDependencies, so a consumer building only the library never fetches
     # or builds it.
     cl-weave = {
-      url = "github:nerima-lisp/cl-weave/v1.1.0";
+      url = "github:nerima-lisp/cl-weave/v1.1.2";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
