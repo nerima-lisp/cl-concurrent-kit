@@ -40,6 +40,17 @@
       url = "github:nerima-lisp/cl-cli/v1.2.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # cl-cli v1.2.0 added a cl-host-kit dependency of its own under SBCL.
+    # cl-cli's own flake.nix does not re-export that input as a full flake
+    # (only as a plain source tree, with no packages output reachable
+    # through cl-cli.inputs.cl-host-kit), so it needs its own top-level
+    # input here -- benchmark-tooling-only, exactly like cl-weave/cl-cli
+    # themselves, added to the same CL_SOURCE_REGISTRY below.
+    cl-host-kit = {
+      url = "github:nerima-lisp/cl-host-kit/v0.2.5";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -50,6 +61,7 @@
       cl-weave,
       treefmt-nix,
       cl-cli,
+      cl-host-kit,
       ...
     }:
     let
@@ -184,14 +196,14 @@
                   pkgs.coreutils
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-                # cl-weave:benchmark and cl-cli are loaded directly by the
-                # script (not just the test system), so their own store
-                # paths must be on the source registry too -- see the
-                # :inherit-configuration source-registry form in
-                # benchmarks/run-benchmarks.lisp.
+                # cl-weave:benchmark and cl-cli (and cl-cli's own cl-host-kit
+                # dependency) are loaded directly by the script (not just the
+                # test system), so their own store paths must be on the
+                # source registry too -- see the :inherit-configuration
+                # source-registry form in benchmarks/run-benchmarks.lisp.
                 CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
                   cl-cli.packages.${ctx.system}.cl-cli
-                }//";
+                }//:${cl-host-kit.packages.${ctx.system}.cl-host-kit}//";
               }
               ''
                 export HOME="$TMPDIR/home"
@@ -213,7 +225,7 @@
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
                   export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${
                     cl-cli.packages.${ctx.system}.cl-cli
-                  }//"
+                  }//:${cl-host-kit.packages.${ctx.system}.cl-host-kit}//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })
