@@ -498,6 +498,33 @@ channel is a real rendezvous" and "This continuation-passing composition is
 deliberately not how `src/channel.lisp`'s `SEND`/`RECV` work" above for the
 two places this project has already had to defend that line explicitly.
 
+## %RUN-DYNAMIC-SELECT's clauses are continuations as data
+
+`%RUN-DYNAMIC-SELECT` (`src/stream-fan-in.lisp`, see "Variable-arity SELECT
+for stream fan-in" below) takes a list of `(CHANNEL . CONTINUATION)` pairs and
+runs whichever `CONTINUATION` corresponds to the channel that became ready --
+`CONTINUATION` itself a two-argument function of `(VALUE RECEIVED-P)`, called
+instead of returning a value the way `RECV` would. That is
+continuation-passing in the most literal sense available in Lisp: a
+first-class function, built to be called instead of returned to, passed
+alongside the channel it reacts to rather than woven into `SELECT`'s
+macro-fixed clause bodies the way a static call site would write it.
+
+`CHANNEL-MERGE-MAP` and `CHANNEL-SWITCH-MAP` build exactly such a list every
+time around their own loop. Each names its continuations as `FLET` functions
+-- `ON-INPUT` (react to `INPUT` producing a value or closing) and, for
+`CHANNEL-SWITCH-MAP`, `ON-INNER` (react to the currently-forwarded inner
+channel) -- so the loop body itself reads as data: `(CONS INPUT (FUNCTION
+ON-INPUT))`, a channel paired with the continuation that runs when it is
+ready, assembled fresh each iteration because which channels are even in play
+(how many inner channels are open, whether `INPUT` itself has closed) changes
+from one iteration to the next. Separating "which channels are being watched
+this iteration" (the list `%RUN-DYNAMIC-SELECT` receives) from "what happens
+when one of them is ready" (the two named `FLET` functions) is the same
+data/logic split `benchmarks/run-benchmarks.lisp`'s `*BENCHMARKS*` table and
+`src/conditions.lisp`'s `%DEFINE-KIT-CONDITION` table already make elsewhere
+in this codebase.
+
 ## Which shapes become a DEFMACRO, and which stay a DEFUN
 
 `src/` currently defines 20 macros against 145 functions: `%WITH-CHANNEL-LOCK`,

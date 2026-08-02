@@ -178,22 +178,20 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
         (%with-closed-stage-outputs ((list output))
           (let ((inner-channels nil)
                 (input-open-p t))
-            (loop while (or input-open-p inner-channels)
-                  do (when scope (check-cancelled scope))
-                     (let ((clauses (%channel-merge-clauses inner-channels output)))
-                       (when (and input-open-p (< (length inner-channels) parallelism))
-                         (push
-                          (cons input
-                                (lambda (value received-p)
-                                  (if received-p
-                                      (let ((inner (funcall function value)))
-                                        (check-type inner channel)
-                                        (push inner inner-channels))
-                                      (setf input-open-p nil))))
-                          clauses))
-                       (let ((result (%run-dynamic-select clauses)))
-                         (when (and (consp result) (not (car result)))
-                           (setf inner-channels (delete (cdr result) inner-channels :count 1)))))))))
+            (flet ((on-input (value received-p)
+                     (if received-p
+                         (let ((inner (funcall function value)))
+                           (check-type inner channel)
+                           (push inner inner-channels))
+                         (setf input-open-p nil))))
+              (loop while (or input-open-p inner-channels)
+                    do (when scope (check-cancelled scope))
+                       (let ((clauses (%channel-merge-clauses inner-channels output)))
+                         (when (and input-open-p (< (length inner-channels) parallelism))
+                           (push (cons input (function on-input)) clauses))
+                         (let ((result (%run-dynamic-select clauses)))
+                           (when (and (consp result) (not (car result)))
+                             (setf inner-channels (delete (cdr result) inner-channels :count 1))))))))))
       :scope scope :executor executor :outputs (list output)))))
 
 (defun channel-switch-map (function input &key (buffer-size 0) scope executor)
@@ -212,27 +210,23 @@ the stage is a tracked child; with EXECUTOR, it runs on that executor."
         (%with-closed-stage-outputs ((list output))
           (let ((inner nil)
                 (input-open-p t))
-            (loop while (or input-open-p inner)
-                  do (when scope (check-cancelled scope))
-                     (let ((clauses nil))
-                       (when input-open-p
-                         (push
-                          (cons input
-                                (lambda (value received-p)
-                                  (if received-p
-                                      (let ((next (funcall function value)))
-                                        (check-type next channel)
-                                        (setf inner next))
-                                      (setf input-open-p nil))))
-                          clauses))
-                       (when inner
-                         (push
-                          (cons inner
-                                (lambda (value received-p)
-                                  (if received-p
-                                      (send output value)
-                                      (setf inner nil))))
-                          clauses))
-                       (%run-dynamic-select clauses))))))
+            (flet ((on-input (value received-p)
+                     (if received-p
+                         (let ((next (funcall function value)))
+                           (check-type next channel)
+                           (setf inner next))
+                         (setf input-open-p nil)))
+                   (on-inner (value received-p)
+                     (if received-p
+                         (send output value)
+                         (setf inner nil))))
+              (loop while (or input-open-p inner)
+                    do (when scope (check-cancelled scope))
+                       (let ((clauses nil))
+                         (when input-open-p
+                           (push (cons input (function on-input)) clauses))
+                         (when inner
+                           (push (cons inner (function on-inner)) clauses))
+                         (%run-dynamic-select clauses)))))))
       :scope scope :executor executor :outputs (list output)))))
 (declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

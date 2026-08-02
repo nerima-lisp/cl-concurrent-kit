@@ -122,7 +122,7 @@ my %non_executable_da = map { $_ => 1 } qw(
   stream-fan-in.lisp:65 stream-fan-in.lisp:66 stream-fan-in.lisp:67 stream-fan-in.lisp:68 stream-fan-in.lisp:69
   stream-fan-in.lisp:70 stream-fan-in.lisp:71 stream-fan-in.lisp:72 stream-fan-in.lisp:73 stream-fan-in.lisp:74
   stream-fan-in.lisp:75 stream-fan-in.lisp:76 stream-fan-in.lisp:78 stream-fan-in.lisp:94 stream-fan-in.lisp:105
-  stream-fan-in.lisp:123 stream-fan-in.lisp:139 stream-fan-in.lisp:164 stream-fan-in.lisp:199 stream-fan-in.lisp:238
+  stream-fan-in.lisp:123 stream-fan-in.lisp:139 stream-fan-in.lisp:164 stream-fan-in.lisp:197 stream-fan-in.lisp:232
   stream-map-concurrent.lisp:8 stream-map-concurrent.lisp:10 stream-map-concurrent.lisp:22 stream-map-concurrent.lisp:120 stream-map-concurrent.lisp:191
   stream-partition.lisp:6 stream-partition.lisp:8
 );
