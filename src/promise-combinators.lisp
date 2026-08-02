@@ -20,6 +20,14 @@ settlements, and CONDITION is meaningful for failed settlements."
   (value nil :read-only t)
   (condition nil :read-only t))
 
+(defun %promise-settlement-for (state outcome)
+  "The PROMISE-SETTLEMENT recording one input's outcome for
+PROMISE-ALL-SETTLED, given the STATE and OUTCOME %OBSERVE-PROMISE calls its
+continuation with."
+  (ecase state
+    (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
+    (:failed (%make-promise-settlement :failed nil outcome))))
+
 (defun promise-all-settled (promises)
   "Return a PROMISE fulfilled after every PROMISE in PROMISES settles.
 
@@ -31,31 +39,31 @@ aggregate promise."
          (aggregate (make-promise)))
     (dolist (promise promises)
       (check-type promise promise))
-    (if (zerop count) (deliver aggregate nil)
-      (let ((lock (make-lock :name "cl-concurrent-kit promise all settled"))
-            (remaining count)
-            (settlements (make-array count)))
-        (loop for promise in promises
-              for index from 0
-              do (let ((index index))
-                   ;; LOOP's FOR mutates one binding of INDEX in place rather
-                   ;; than creating a fresh one per iteration, so the closure
-                   ;; below needs its own copy -- otherwise every observer
-                   ;; would write to whatever INDEX the loop had reached by
-                   ;; the time a promise actually settled, not the slot it
-                   ;; was registered for.
+    (if (zerop count)
+        (deliver aggregate nil)
+        (let ((lock (make-lock :name "cl-concurrent-kit promise all settled"))
+              (remaining count)
+              (settlements (make-array count)))
+          (flet ((record-settlement (index promise)
                    (%observe-promise
                     promise
                     (lambda (state outcome)
                       (let (complete)
-                        (with-lock-held
-                          (lock)
-                          (setf (aref settlements index) (ecase state
-                              (:fulfilled (%make-promise-settlement :fulfilled outcome nil))
-                              (:failed (%make-promise-settlement :failed nil outcome))))
+                        (with-lock-held (lock)
+                          (setf (aref settlements index) (%promise-settlement-for state outcome))
                           (setf complete (zerop (decf remaining))))
                         (when complete
-                          (deliver aggregate (coerce settlements 'list))))))))))
+                          (deliver aggregate (coerce settlements 'list))))))))
+            (loop for promise in promises
+                  for index from 0
+                  do (let ((index index))
+                       ;; LOOP's FOR mutates one binding of INDEX in place rather
+                       ;; than creating a fresh one per iteration, so the closure
+                       ;; below needs its own copy -- otherwise every observer
+                       ;; would write to whatever INDEX the loop had reached by
+                       ;; the time a promise actually settled, not the slot it
+                       ;; was registered for.
+                       (record-settlement index promise))))))
     aggregate))
 
 (defmacro %unless-decided ((lock decided-place) &body body)
@@ -291,21 +299,20 @@ happens to finish on its own."
         (stop (make-semaphore :name "cl-concurrent-kit promise-timeout stop"))
         (decided nil)
         (observer nil))
-    (setf observer
-          (lambda (state outcome)
-            (when (%decide-once lock decided)
-              (signal-semaphore stop)
-              (ecase state
-                (:fulfilled (%deliver-if-pending result outcome))
-                (:failed (%deliver-error-if-pending result outcome))))))
-    (%observe-promise promise observer)
-    (make-thread
-     (lambda ()
-       (unless (wait-on-semaphore stop :timeout timeout)
-         (when (%decide-once lock decided)
-           (%unobserve-promise promise observer)
-           (%deliver-error-if-pending
-            result
-            (make-condition 'operation-timed-out :operation :promise-timeout :timeout timeout)))))
-     :name "cl-concurrent-kit promise-timeout timer")
+    (flet ((on-promise-settled (state outcome)
+             (when (%decide-once lock decided)
+               (signal-semaphore stop)
+               (ecase state
+                 (:fulfilled (%deliver-if-pending result outcome))
+                 (:failed (%deliver-error-if-pending result outcome)))))
+           (run-timer ()
+             (unless (wait-on-semaphore stop :timeout timeout)
+               (when (%decide-once lock decided)
+                 (%unobserve-promise promise observer)
+                 (%deliver-error-if-pending
+                  result
+                  (make-condition 'operation-timed-out :operation :promise-timeout :timeout timeout))))))
+      (setf observer (function on-promise-settled))
+      (%observe-promise promise observer)
+      (make-thread (function run-timer) :name "cl-concurrent-kit promise-timeout timer"))
     result))

@@ -61,11 +61,7 @@ failed, WITH-TASK-SCOPE signals SCOPE-ERROR once they have all finished."
          ;; under it.
          (unless ,body-completed-p
            (%scope-cancel ,scope-var))
-         (handler-case
-             (%scope-await-children ,scope-var :timeout ,timeout)
-           (operation-timed-out (condition)
-             (%scope-cancel ,scope-var)
-             (error condition))))
+         (%scope-await-children-or-cancel ,scope-var ,timeout))
        (when ,body-completed-p
          (%scope-signal-failures ,scope-var)
          (values-list ,results)))))

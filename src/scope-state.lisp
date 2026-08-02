@@ -152,6 +152,16 @@ function's) is what stops the children this stopped waiting for."
         (zerop (hash-table-count (task-scope-children scope)))
       done)))
 
+(defun %scope-await-children-or-cancel (scope timeout)
+  "%SCOPE-AWAIT-CHILDREN, taking over the caller's job its own docstring
+describes: on OPERATION-TIMED-OUT, cancel SCOPE's still-running children
+before re-signalling, rather than leaving that to whoever called this."
+  (handler-case
+      (%scope-await-children scope :timeout timeout)
+    (operation-timed-out (condition)
+      (%scope-cancel scope)
+      (error condition))))
+
 (defun %scope-signal-failures (scope)
   (let ((failures (%with-scope-lock (scope) (reverse (task-scope-failures scope)))))
     (when failures

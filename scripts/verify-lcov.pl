@@ -43,17 +43,17 @@ my %non_executable_da = map { $_ => 1 } qw(
   latch.lisp:76 latch.lisp:77 latch.lisp:80
   promise.lisp:8 promise.lisp:11 promise.lisp:12 promise.lisp:13 promise.lisp:14
   promise.lisp:15 promise.lisp:16 promise.lisp:21 promise.lisp:22 promise.lisp:206
-  promise-combinators.lisp:12 promise-combinators.lisp:19 promise-combinators.lisp:20 promise-combinators.lisp:21 promise-combinators.lisp:61
-  promise-combinators.lisp:62 promise-combinators.lisp:63 promise-combinators.lisp:64 promise-combinators.lisp:66 promise-combinators.lisp:67
-  promise-combinators.lisp:68 promise-combinators.lisp:69 promise-combinators.lisp:70 promise-combinators.lisp:71 promise-combinators.lisp:72
-  promise-combinators.lisp:73 promise-combinators.lisp:74 promise-combinators.lisp:76 promise-combinators.lisp:77 promise-combinators.lisp:78
-  promise-combinators.lisp:79 promise-combinators.lisp:80 promise-combinators.lisp:81 promise-combinators.lisp:82 promise-combinators.lisp:84
-  promise-combinators.lisp:85 promise-combinators.lisp:86 promise-combinators.lisp:87 promise-combinators.lisp:88 promise-combinators.lisp:89
-  promise-combinators.lisp:90 promise-combinators.lisp:91 promise-combinators.lisp:92 promise-combinators.lisp:93 promise-combinators.lisp:94
-  promise-combinators.lisp:95 promise-combinators.lisp:96 promise-combinators.lisp:97 promise-combinators.lisp:98 promise-combinators.lisp:99
-  promise-combinators.lisp:100 promise-combinators.lisp:101 promise-combinators.lisp:102 promise-combinators.lisp:103 promise-combinators.lisp:104
-  promise-combinators.lisp:105 promise-combinators.lisp:106 promise-combinators.lisp:107 promise-combinators.lisp:108 promise-combinators.lisp:109
-  promise-combinators.lisp:110
+  promise-combinators.lisp:12 promise-combinators.lisp:19 promise-combinators.lisp:20 promise-combinators.lisp:21 promise-combinators.lisp:69
+  promise-combinators.lisp:70 promise-combinators.lisp:71 promise-combinators.lisp:72 promise-combinators.lisp:74 promise-combinators.lisp:75
+  promise-combinators.lisp:76 promise-combinators.lisp:77 promise-combinators.lisp:78 promise-combinators.lisp:79 promise-combinators.lisp:80
+  promise-combinators.lisp:81 promise-combinators.lisp:82 promise-combinators.lisp:84 promise-combinators.lisp:85 promise-combinators.lisp:86
+  promise-combinators.lisp:87 promise-combinators.lisp:88 promise-combinators.lisp:89 promise-combinators.lisp:90 promise-combinators.lisp:92
+  promise-combinators.lisp:93 promise-combinators.lisp:94 promise-combinators.lisp:95 promise-combinators.lisp:96 promise-combinators.lisp:97
+  promise-combinators.lisp:98 promise-combinators.lisp:99 promise-combinators.lisp:100 promise-combinators.lisp:101 promise-combinators.lisp:102
+  promise-combinators.lisp:103 promise-combinators.lisp:104 promise-combinators.lisp:105 promise-combinators.lisp:106 promise-combinators.lisp:107
+  promise-combinators.lisp:108 promise-combinators.lisp:109 promise-combinators.lisp:110 promise-combinators.lisp:111 promise-combinators.lisp:112
+  promise-combinators.lisp:113 promise-combinators.lisp:114 promise-combinators.lisp:115 promise-combinators.lisp:116 promise-combinators.lisp:117
+  promise-combinators.lisp:118
   channel.lisp:10 channel.lisp:11 channel.lisp:12 channel.lisp:13 channel.lisp:14
   channel.lisp:16 channel.lisp:17 channel.lisp:18 channel.lisp:19 channel.lisp:20
   channel.lisp:21 channel.lisp:22 channel.lisp:23 channel.lisp:24 channel.lisp:25
