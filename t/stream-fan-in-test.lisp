@@ -1,6 +1,56 @@
 ;;;; t/stream-fan-in-test.lisp
 (in-package #:cl-concurrent-kit/test)
 
+(defun %test-worker-pool-common-behavior (map-function)
+  "The four IT blocks CHANNEL-MAP-CONCURRENT and CHANNEL-MAP-UNORDERED share
+verbatim, parameterized over MAP-FUNCTION -- everything about a worker-pool
+stage's own lifecycle (a worker's error, a live SCOPE, an EXECUTOR bounding
+worker count, an already shut-down EXECUTOR) that neither stage's own
+ordering guarantee changes."
+  (it "fails the completion promise when a worker's FUNCTION signals"
+    (let ((input (make-channel :buffer-size 2)))
+      (send input 1) (send input 2)
+      (close-channel input)
+      ;; OUTPUT needs a reader (or its own buffer): job 1's result is ready
+      ;; to deliver before job 2's error is discovered, and an unread,
+      ;; unbuffered OUTPUT would block that delivery forever, never
+      ;; reaching -- let alone failing on -- job 2 at all.
+      (multiple-value-bind (output completion)
+          (funcall map-function 2 (lambda (x) (when (= x 2) (error "boom")) x) input
+                   :buffer-size 2)
+        (declare (ignore output))
+        (signals error (await completion :timeout 2)))))
+
+  (it "runs to completion with a live, uncancelled SCOPE"
+    (let ((input (make-channel :buffer-size 3)))
+      (dolist (x (list 1 2 3)) (send input x))
+      (close-channel input)
+      (with-task-scope (scope)
+        (multiple-value-bind (output completion)
+            (funcall map-function 2 (function identity) input :scope scope)
+          (expect (sort (drain-channel output :timeout 2) (function <))
+                  :to-equal (list 1 2 3))
+          (await completion :timeout 2)))))
+
+  (it "bounds worker count by the EXECUTOR's own thread and queue capacity"
+    (let ((input (make-channel :buffer-size 3)))
+      (dolist (x (list 1 2 3)) (send input x))
+      (close-channel input)
+      (with-executor (executor :size 2)
+        (multiple-value-bind (output completion)
+            (funcall map-function 5 (lambda (x) (* x x)) input :executor executor)
+          (expect (sort (drain-channel output :timeout 2) (function <))
+                  :to-equal (list 1 4 9))
+          (await completion :timeout 2)))))
+
+  (it "fails the completion promise synchronously when a worker fails to start on an already shut-down EXECUTOR"
+    (let ((input (make-channel))
+          (executor (make-executor :size 1)))
+      (shutdown-executor executor :wait t)
+      (multiple-value-bind (output completion) (funcall map-function 2 (function identity) input :executor executor)
+        (signals executor-shut-down (await completion :timeout 1))
+        (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)))))
+
 (describe "channel-map-concurrent"
   (it "preserves input order in the output despite out-of-order completion"
     (let ((input (make-channel :buffer-size 3)))
@@ -12,61 +62,9 @@
                 :to-equal (list 0.03 0.01 0.02))
         (await completion :timeout 2))))
 
-  (it "fails the completion promise when a worker's FUNCTION signals"
-    (let ((input (make-channel :buffer-size 2)))
-      (send input 1) (send input 2)
-      (close-channel input)
-      ;; OUTPUT needs a reader (or its own buffer): job 1's result is ready
-      ;; to deliver before job 2's error is discovered, and an unread,
-      ;; unbuffered OUTPUT would block that delivery forever, never
-      ;; reaching -- let alone failing on -- job 2 at all.
-      (multiple-value-bind (output completion)
-          (channel-map-concurrent 2 (lambda (x) (when (= x 2) (error "boom")) x) input
-                                   :buffer-size 2)
-        (declare (ignore output))
-        (signals error (await completion :timeout 2)))))
-
-  (it "runs to completion with a live, uncancelled SCOPE"
-    (let ((input (make-channel :buffer-size 3)))
-      (dolist (x (list 1 2 3)) (send input x))
-      (close-channel input)
-      (with-task-scope (scope)
-        (multiple-value-bind (output completion)
-            (channel-map-concurrent 2 (function identity) input :scope scope)
-          (expect (sort (drain-channel output :timeout 2) (function <))
-                  :to-equal (list 1 2 3))
-          (await completion :timeout 2)))))
-
-  (it "bounds worker count by the EXECUTOR's own thread and queue capacity"
-    (let ((input (make-channel :buffer-size 3)))
-      (dolist (x (list 1 2 3)) (send input x))
-      (close-channel input)
-      (with-executor (executor :size 2)
-        (multiple-value-bind (output completion)
-            (channel-map-concurrent 5 (lambda (x) (* x x)) input :executor executor)
-          (expect (sort (drain-channel output :timeout 2) (function <))
-                  :to-equal (list 1 4 9))
-          (await completion :timeout 2)))))
-
-  (it "fails the completion promise synchronously when a worker fails to start on an already shut-down EXECUTOR"
-    (let ((input (make-channel))
-          (executor (make-executor :size 1)))
-      (shutdown-executor executor :wait t)
-      (multiple-value-bind (output completion) (channel-map-concurrent 2 (function identity) input :executor executor)
-        (signals executor-shut-down (await completion :timeout 1))
-        (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)))))
+  (%test-worker-pool-common-behavior (function channel-map-concurrent)))
 
 (describe "channel-map-unordered"
-  (it "fails the completion promise when a worker's FUNCTION signals"
-    (let ((input (make-channel :buffer-size 2)))
-      (send input 1) (send input 2)
-      (close-channel input)
-      (multiple-value-bind (output completion)
-          (channel-map-unordered 2 (lambda (x) (when (= x 2) (error "boom")) x) input
-                                  :buffer-size 2)
-        (declare (ignore output))
-        (signals error (await completion :timeout 2)))))
-
   (it "emits results in completion order rather than input order"
     (let ((input (make-channel :buffer-size 2)))
       ;; The slower job (0.05s) is submitted first; with two workers running
@@ -89,35 +87,7 @@
                 :to-equal (list 1 4 9 16))
         (await completion :timeout 2))))
 
-  (it "runs to completion with a live, uncancelled SCOPE"
-    (let ((input (make-channel :buffer-size 3)))
-      (dolist (x (list 1 2 3)) (send input x))
-      (close-channel input)
-      (with-task-scope (scope)
-        (multiple-value-bind (output completion)
-            (channel-map-unordered 2 (function identity) input :scope scope)
-          (expect (sort (drain-channel output :timeout 2) (function <))
-                  :to-equal (list 1 2 3))
-          (await completion :timeout 2)))))
-
-  (it "bounds worker count by the EXECUTOR's own thread and queue capacity"
-    (let ((input (make-channel :buffer-size 3)))
-      (dolist (x (list 1 2 3)) (send input x))
-      (close-channel input)
-      (with-executor (executor :size 2)
-        (multiple-value-bind (output completion)
-            (channel-map-unordered 5 (lambda (x) (* x x)) input :executor executor)
-          (expect (sort (drain-channel output :timeout 2) (function <))
-                  :to-equal (list 1 4 9))
-          (await completion :timeout 2)))))
-
-  (it "fails the completion promise synchronously when a worker fails to start on an already shut-down EXECUTOR"
-    (let ((input (make-channel))
-          (executor (make-executor :size 1)))
-      (shutdown-executor executor :wait t)
-      (multiple-value-bind (output completion) (channel-map-unordered 2 (function identity) input :executor executor)
-        (signals executor-shut-down (await completion :timeout 1))
-        (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)))))
+  (%test-worker-pool-common-behavior (function channel-map-unordered)))
 
 (describe "channel-merge"
   (it "forwards every value from every input, preserving each input's own order"
