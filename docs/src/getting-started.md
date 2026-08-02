@@ -5,7 +5,7 @@
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.4.1";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.4.2";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
