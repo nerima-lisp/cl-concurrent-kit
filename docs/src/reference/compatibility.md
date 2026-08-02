@@ -31,10 +31,14 @@
   edited with throughout: renames (`refactor rename-function`), balance
   validation after every structural edit (`inspect check`), and definition
   discovery (`inspect definitions`) all ran through it rather than by hand.
-- **Platforms:** `x86_64-linux` only, verified by CI. `aarch64-darwin` was
-  dropped on 2026-08-01: its only gate was the maintainer's local
-  `nix flake check`, which nobody can observe being skipped. `nix develop` and
-  `nix build` therefore do not work on macOS. See `flake.nix`.
+- **Platforms:** `x86_64-linux` is the only platform CI actually gates.
+  `aarch64-darwin` is also declared, for `nix develop`/`nix build` on the
+  development machine -- dropped briefly on 2026-08-01 for carrying no CI
+  gate, then re-declared on 2026-08-02 once the org's own
+  [PACKAGE_STANDARD.md](https://github.com/nerima-lisp/.github/blob/main/PACKAGE_STANDARD.md)
+  accepted that trade-off explicitly rather than requiring every declared
+  system to be CI-gated. `aarch64-linux` and `x86_64-darwin` are nobody's
+  verification and stay undeclared. See `flake.nix`.
 
 cl-concurrent-kit wraps `sb-thread` and `sb-ext` directly rather than
 depending on bordeaux-threads; see [Architecture](architecture.md) for why.
