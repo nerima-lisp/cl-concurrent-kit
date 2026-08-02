@@ -404,6 +404,27 @@ path. `%WITH-CHANNEL-LIST-STAGE` is that setup/teardown written once; the
 three stages differ only in how they read from the validated input list and
 write to the output inside it.
 
+Every stage above -- and every other one in `src/stream.lisp`,
+`src/stream-fan-out.lisp`, and `src/stream-partition.lisp` -- ultimately
+starts through `%START-CHANNEL-STAGE`, which takes its worker as an ordinary
+function argument. Every one of those call sites, without exception, wrapped
+that argument as `(LAMBDA () BODY)` and, for a stage that owns an output,
+wrapped `BODY` again in `%WITH-CLOSED-STAGE-OUTPUTS`. That is `BODY`
+unevaluated, needed for no reason a function argument could ever supply
+(`%START-CHANNEL-STAGE`'s own argument is *called*, not macroexpanded, so
+by the time it runs the caller's local variables it closes over are already
+fully evaluated) -- exactly this document's own first criterion for a
+macro. `WITH-CHANNEL-STAGE` names that repeated wrapping once; every
+stream stage that runs a literal body now reads `(WITH-CHANNEL-STAGE (:SCOPE
+... :OUTPUTS ...) BODY)` instead of the three-way nesting. The two exceptions
+-- `CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED`'s own worker pools,
+just below -- still call `%START-CHANNEL-STAGE` directly, because they start
+a *runtime-variable* number of copies of one named function
+(`(LOOP REPEAT WORKER-LIMIT COLLECT (%START-CHANNEL-STAGE (FUNCTION WORKER)
+...))`), which is exactly the shape a macro capturing one literal `BODY`
+cannot express -- the same "runtime-variable shape" argument that keeps
+`%RUN-DYNAMIC-SELECT` a function below.
+
 `CHANNEL-MAP-CONCURRENT` and `CHANNEL-MAP-UNORDERED` live in their own file,
 `src/stream-map-concurrent.lisp`, rather than alongside the fan-in stages
 above: both read from exactly one `INPUT` channel and dispatch to a worker
@@ -527,28 +548,32 @@ in this codebase.
 
 ## Which shapes become a DEFMACRO, and which stay a DEFUN
 
-`src/` currently defines 20 macros against 145 functions: `%WITH-CHANNEL-LOCK`,
+`src/` currently defines 21 macros against 145 functions: `%WITH-CHANNEL-LOCK`,
 `%CHANNEL-NOTIFY`, `%DEFINE-KIT-CONDITION`, `%WITH-WORK-QUEUE-LOCK`,
 `WITH-EXECUTOR`, `WITH-LOCK-HELD`, `%WAIT-UNTIL`, `%WITH-DEADLINE-WAIT`,
 `%WITH-SCOPE-LOCK`, `%UNLESS-DECIDED`, `%DECIDE-ONCE`, `%WITH-RACE-CLEANUP`,
 `WITH-TASK-SCOPE`, `%WITH-CHANNEL-LIST-STAGE`, `%WITH-CLOSED-STAGE-OUTPUTS`,
-`CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`, `SELECT`, and
-`WITH-TIMEOUT`. That ratio is not an oversight to correct toward more
-macros; it reflects a specific, checkable criterion for which shape a given
-piece of code needs.
+`WITH-CHANNEL-STAGE`, `CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`,
+`SELECT`, and `WITH-TIMEOUT`. That ratio is not an oversight to correct
+toward more macros; it reflects a specific, checkable criterion for which
+shape a given piece of code needs -- checked again, and found to justify one
+more macro, when `%START-CHANNEL-STAGE`'s call sites turned out to repeat the
+same unevaluated-body wrapping at every one of them (see "%START-CHANNEL-STAGE
+... `WITH-CHANNEL-STAGE`" above).
 
 A macro earns its place here for one of two reasons. Either it needs
 `BODY` unevaluated -- an unwind-protected critical section
 (`%WITH-CHANNEL-LOCK`, `%WITH-SCOPE-LOCK`, `%WITH-DEADLINE-WAIT`), a
 resource-scoped binding (`WITH-EXECUTOR`, `WITH-TASK-SCOPE`,
-`WITH-TIMEOUT`, `CHANNEL-PRODUCER`), or a loop skeleton whose per-iteration
-work varies by caller (`%CONSUME-CHANNEL`, `%WITH-RACE-CLEANUP`) -- none of
-which a function can express, since a function's arguments are evaluated
-before it ever runs. Or its clause/branch shape is known at compile time
-and inlining it avoids a real runtime cost: `SELECT` expands every clause's
-`TRY-SEND`/`TRY-RECV` probe directly into its expansion specifically so
-choosing a ready clause is a direct call, not a dispatch through a stored
-handler vector (see "SELECT sleeps; it does not poll" above).
+`WITH-TIMEOUT`, `CHANNEL-PRODUCER`, `WITH-CHANNEL-STAGE`), or a loop skeleton
+whose per-iteration work varies by caller (`%CONSUME-CHANNEL`,
+`%WITH-RACE-CLEANUP`) -- none of which a function can express, since a
+function's arguments are evaluated before it ever runs. Or its clause/branch
+shape is known at compile time and inlining it avoids a real runtime cost:
+`SELECT` expands every clause's `TRY-SEND`/`TRY-RECV` probe directly into its
+expansion specifically so choosing a ready clause is a direct call, not a
+dispatch through a stored handler vector (see "SELECT sleeps; it does not
+poll" above).
 
 Neither reason applies to most of the other 145. `src/stream-fan-in.lisp`'s
 `%RUN-DYNAMIC-SELECT` is the clearest negative case: it exists *because*
