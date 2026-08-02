@@ -627,3 +627,62 @@ build order and regardless of whether some earlier fasl was cached rather than
 recompiled, and it wraps each compile in `WITH-COMPILATION-UNIT`'s `:POLICY`,
 which is dynamically scoped and restores the caller's own policy exactly on
 the way out. The system gets the policy; nobody else does.
+
+## When "as much as possible" is satisfied
+
+Three of this project's stated goals -- push as much as possible into
+`DEFMACRO`, use continuation-passing style as much as possible, improve
+complex functions' readability -- are phrased as a direction rather than a
+finish line. Applied without a stopping rule, each would justify rewriting
+the entire codebase indefinitely: some function is always the next-most
+complex one, some `DEFUN` could always theoretically become a `DEFMACRO`,
+some blocking call could always theoretically be reached through a callback.
+This project's actual stopping rule, applied consistently everywhere above:
+
+- **DEFMACRO vs. DEFUN** ("Which shapes become a DEFMACRO, and which stay a
+  DEFUN" above): a shape earns a macro only for one of two checkable reasons
+  -- needing `BODY` unevaluated, or a compile-time-fixed shape a real
+  function call could not express (`SELECT`'s clause count). Every one of
+  this codebase's 145 functions was written as a function because neither
+  reason applies to it; converting one to a macro without one of those two
+  reasons would not raise the abstraction level, it would only make the
+  function harder to trace with `DESCRIBE-FUNCTION` and impossible to pass
+  as a first-class value -- a real regression, not a neutral stylistic
+  choice.
+- **Continuation-passing vs. blocking** ("Where continuation-passing is
+  used, and where it deliberately is not" and "%RUN-DYNAMIC-SELECT's clauses
+  are continuations as data" above): CPS is used everywhere a caller is
+  merely told the outcome of something that already happened elsewhere
+  (`%OBSERVE-PROMISE`, `%RUN-DYNAMIC-SELECT`'s clause continuations,
+  `%SCOPE-ADD-WAKER`), and never where a caller is a genuine party to a
+  rendezvous or a real deadline it is waiting to observe directly
+  (`CHANNEL`/`SELECT`, `AWAIT-LATCH`/`AWAIT-BARRIER`, `%WAIT-UNTIL`).
+  Converting the second group to callbacks would not be "more CPS," it would
+  silently change what those primitives guarantee a caller is synchronized
+  with -- the same failure mode `PROMISE-RACE`'s own docstring already warns
+  against for a channel's `SEND`/`RECV`.
+- **Readability extraction** ("The high-complexity readability pass" above):
+  every function on the original byte-span ranking was read individually,
+  not filtered by a size threshold alone. Eight were genuinely restructured;
+  `%CALL-WITH-TIMEOUT` was left alone because its `HANDLER-BIND` clause's
+  `RETURN-FROM` must stay lexically inside the `BLOCK` it targets, so
+  extracting it would either break that or add a wrapper that renames the
+  code without clarifying it. Two more functions
+  (`CHANNEL-MERGE-MAP`/`CHANNEL-SWITCH-MAP`) were found and fixed afterward
+  by asking a different question -- not "is this long" but "does this
+  function build an unnamed continuation inline" -- and applied the same
+  treatment. `%CHANNEL-MERGE-CLAUSES`, `CHANNEL-PARTITION-BY`,
+  `CHANNEL-BROADCAST`, and `EXECUTOR-MAP` were read against that same
+  question afterward and left alone: each is already either a single
+  small conditional or already has its own named local helper from earlier
+  work, and a further split would move lines without removing any real
+  tangle. `paredit inspect duplicates` was also run across `t/` looking for
+  copy-pasted test logic that should become a shared helper; its only large
+  groups are incidental similarity between distinct test scenarios' own
+  setup calls (`(send channel :some-keyword)`, one per scenario) rather than
+  duplicated logic, so no further test abstraction followed from it.
+
+The criterion in each case is the same shape: change the code where a
+concrete, checkable reason exists, and leave it where none does, rather than
+treating a superlative goal as license to keep changing code that no longer
+has a defect to fix.
