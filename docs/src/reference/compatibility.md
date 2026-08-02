@@ -87,3 +87,19 @@ top-level README.)
 - **Scope:** single SBCL image only. Nothing here coordinates across OS
   processes or machines; `promise`/`channel`/`executor`/`task-scope` objects
   are not serializable and sharing one across images is not a supported use.
+- **Timeout audit:** every place this project itself runs a command or blocks
+  on a result has an explicit bound, checked directly rather than assumed:
+  - `flake.nix`'s three shell invocations (`checks.coverage-lcov`,
+    `checks.benchmark`, `apps.benchmark`) each wrap their `sbcl` call in
+    `timeout --signal=KILL <N>s`.
+  - Every job in every workflow under `.github/workflows/` (`ci.yml`,
+    `docs.yml`'s two jobs, `flake-update.yml`, `release.yml`) declares its own
+    `timeout-minutes:` -- there is no job relying on GitHub's default.
+  - The test suite has a global backstop (`run-all :timeout-ms 20000` in
+    `t/package.lisp`) plus its own per-call `:timeout` at almost every
+    individual blocking `recv`/`await`. The four bare calls without one
+    (`t/channel-test.lisp:102,106`, `t/promise-test.lisp:231`,
+    `t/select-test.lisp:241`) were each checked individually rather than
+    assumed safe: in every case the value is already available -- sent,
+    cancelled, or buffered -- before the blocking call runs, so it resolves
+    synchronously and structurally cannot block.
