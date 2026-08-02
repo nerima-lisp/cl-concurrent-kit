@@ -21,7 +21,7 @@
     # lispDependencies, so a consumer building only the library never fetches
     # or builds it.
     cl-weave = {
-      url = "github:nerima-lisp/cl-weave/v1.1.2";
+      url = "github:nerima-lisp/cl-weave/v1.1.4";
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
@@ -37,7 +37,7 @@
     # replacing two arguments (checks.benchmark's positional "1",
     # apps.benchmark's forwarded "$@") the script used to silently ignore.
     cl-cli = {
-      url = "github:nerima-lisp/cl-cli/v1.1.0";
+      url = "github:nerima-lisp/cl-cli/v1.2.0";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };

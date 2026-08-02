@@ -2,16 +2,22 @@
 
 - **Implementation:** SBCL only. Tested against SBCL 2.6.0.
 - **Dependencies:** none at runtime. `cl-concurrent-kit/test` depends on
-  [cl-weave](https://github.com/nerima-lisp/cl-weave) v1.1.2, test-only --
+  [cl-weave](https://github.com/nerima-lisp/cl-weave) v1.1.4, test-only --
   its test DSL (`describe`/`it`/`expect`/`signals`), property-based testing
   and fuzzing (`it-property`, `it-fuzz`, `gen-integer`, `gen-list`,
   `gen-boolean`), soft assertions (`with-soft-assertions`, reporting every
   failing `expect` in an `it` block instead of stopping at the first), and
   benchmark facility (`benchmark`, used by `benchmarks/run-benchmarks.lisp`)
-  are all in active use, not just the assertion macros. That same script
-  additionally depends on [cl-cli](https://github.com/nerima-lisp/cl-cli)
-  v1.1.0, benchmark-tooling-only, for its `--only`/scale argument parsing --
-  neither it nor `cl-weave` is reachable from `cl-concurrent-kit`'s own
+  are all in active use, not just the assertion macros. (v1.1.2 skipped
+  deliberately: its tag exists but `release.yml` never actually published it
+  -- unrelated to a real, SBCL-only-affecting fix in v1.1.3 that removed an
+  unconditional `sb-cover` dependency from cl-weave's main system -- so
+  v1.1.4, which additionally guards several ECL portability paths this
+  SBCL-only project never exercises, is the version actually pinned.) That
+  same script additionally depends on
+  [cl-cli](https://github.com/nerima-lisp/cl-cli) v1.2.0,
+  benchmark-tooling-only, for its `--only`/scale argument parsing -- neither
+  it nor `cl-weave` is reachable from `cl-concurrent-kit`'s own
   `:depends-on ()`, only from `flake.nix`'s `CL_SOURCE_REGISTRY` for the
   script and test system respectively.
   `flake.nix` itself is built with

@@ -36,10 +36,11 @@ only depends on `cl-concurrent-kit` itself.
 
 The rest of the org's catalog (checked against
 [github.com/orgs/nerima-lisp/repositories](https://github.com/orgs/nerima-lisp/repositories)
-as of v0.3.0) fares no better against that same test: `cl-json-kit`,
-`cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`, `cl-date-kit`,
-`cl-tty-kit`, and `cl-host-kit` all answer a data-format, text, or
-host-environment need this package -- concurrency primitives over
+via `gh api orgs/nerima-lisp/repos`, re-fetched live as of v0.4.0 rather than
+carried forward from an earlier pass) fares no better against that same
+test: `cl-json-kit`, `cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`,
+`cl-date-kit`, `cl-tty-kit`, and `cl-host-kit` all answer a data-format,
+text, or host-environment need this package -- concurrency primitives over
 `sb-thread` alone -- has no call site for at all; adopting one would be a
 dependency in search of a use, not a use in search of a dependency.
 `cl-boundary-kit` and `cl-dataflow` are the closest in *spirit* (explicit
@@ -47,9 +48,18 @@ boundary/effect abstractions, composable computation graphs) but overlap
 this project's own domain closely enough that depending on either would
 mean wrapping their abstractions around this package's -- the adapter this
 architecture deliberately avoids -- rather than composing with them as a
-consumer. `cl-cc`, `nshell`, `loom`, and the `cl-cc-*` compiler-internals
-repositories are a different domain (a self-hosting compiler, a shell, a
-terminal editor) with no natural connection to this one at all.
+consumer. `cl-cc`, `nshell`, `loom`, `cl-tmux`, and the `cl-cc-*`
+compiler-internals repositories are a different domain (a self-hosting
+compiler, a shell, a terminal multiplexer, a terminal editor) with no
+natural connection to this one at all. `cl-process-kit` (external process
+execution) and `cl-history-kit` (REPL/shell history) are interactive-tooling
+concerns this in-process concurrency library has no call site for, same as
+the data-format group above. `cl-prolog` -- a logic-programming engine that,
+notably, is itself built with "CPS proof search" per its own
+description -- answers a different question (searching for a proof) than
+anything here needs solved. `cl-log-kit` is the one candidate with a real,
+if single, call site (`src/executor.lisp`'s worker-loop `(FORMAT
+*ERROR-OUTPUT* ...)`), discussed on its own terms above.
 
 ## No backward-compatibility surface to eliminate
 
