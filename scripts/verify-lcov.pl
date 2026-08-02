@@ -113,18 +113,6 @@ my %non_executable_da = map { $_ => 1 } qw(
   scope-state.lisp:42 scope-state.lisp:43 scope-state.lisp:44
   scope-execution.lisp:8
   scope.lisp:22
-  stream.lisp:15 stream.lisp:115 stream.lisp:123 stream.lisp:134 stream.lisp:145
-  stream.lisp:154 stream.lisp:173 stream.lisp:229 stream.lisp:239 stream.lisp:264
-  stream-fan-out.lisp:8 stream-fan-out.lisp:10 stream-fan-out.lisp:38 stream-fan-out.lisp:61 stream-fan-out.lisp:77
-  stream-fan-out.lisp:96
-  stream-fan-in.lisp:16 stream-fan-in.lisp:18 stream-fan-in.lisp:28 stream-fan-in.lisp:48 stream-fan-in.lisp:59
-  stream-fan-in.lisp:60 stream-fan-in.lisp:61 stream-fan-in.lisp:62 stream-fan-in.lisp:63 stream-fan-in.lisp:64
-  stream-fan-in.lisp:65 stream-fan-in.lisp:66 stream-fan-in.lisp:67 stream-fan-in.lisp:68 stream-fan-in.lisp:69
-  stream-fan-in.lisp:70 stream-fan-in.lisp:71 stream-fan-in.lisp:72 stream-fan-in.lisp:73 stream-fan-in.lisp:74
-  stream-fan-in.lisp:75 stream-fan-in.lisp:76 stream-fan-in.lisp:78 stream-fan-in.lisp:94 stream-fan-in.lisp:105
-  stream-fan-in.lisp:123 stream-fan-in.lisp:139 stream-fan-in.lisp:164 stream-fan-in.lisp:197 stream-fan-in.lisp:232
-  stream-map-concurrent.lisp:8 stream-map-concurrent.lisp:10 stream-map-concurrent.lisp:22 stream-map-concurrent.lisp:120 stream-map-concurrent.lisp:191
-  stream-partition.lisp:6 stream-partition.lisp:8
 );
 my %seen_non_executable_da;
 my @DIAG_uncovered;
