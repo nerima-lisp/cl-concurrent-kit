@@ -40,7 +40,7 @@ and grepping the tree confirms it: zero matches across `src/`, `t/`, and the
 `.asd` for `deprecated`, `legacy`, `obsolete`, `backward-compat`, or `shim`,
 in any casing. The absence is the intended state, not a gap -- keep it that
 way by deleting rather than deprecating when a public symbol's shape
-changes, exactly as `cl-concurrent-kit.asd`'s `:version "0.2.0"` (no `1.x`
+changes, exactly as `cl-concurrent-kit.asd`'s `:version "0.3.0"` (no `1.x`
 compatibility promise yet) allows.
 
 ## The CONDITION-WAIT timeout contract
