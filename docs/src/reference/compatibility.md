@@ -23,7 +23,14 @@
   `flake.nix` itself is built with
   [cl-nix-forge](https://github.com/nerima-lisp/cl-nix-forge), the org's Nix
   packaging library -- a build-time-only, Nix-level dependency with no Lisp
-  component.
+  component. A fourth nerima-lisp tool,
+  [paredit-cli](https://github.com/nerima-lisp/paredit-cli), is not a
+  dependency at all in the ASDF/Nix sense -- it never appears in
+  `:depends-on`, `flake.nix`, or `CL_SOURCE_REGISTRY` -- but is the
+  structure-aware refactoring tool this project's own source history was
+  edited with throughout: renames (`refactor rename-function`), balance
+  validation after every structural edit (`inspect check`), and definition
+  discovery (`inspect definitions`) all ran through it rather than by hand.
 - **Platforms:** `x86_64-linux` only, verified by CI. `aarch64-darwin` was
   dropped on 2026-08-01: its only gate was the maintainer's local
   `nix flake check`, which nobody can observe being skipped. `nix develop` and
