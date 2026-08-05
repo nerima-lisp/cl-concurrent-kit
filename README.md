@@ -43,7 +43,7 @@ The source for that site lives in [docs/src/](docs/src/).
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.0";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.1";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
