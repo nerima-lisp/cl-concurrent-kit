@@ -47,23 +47,25 @@ reaches zero, every current and future AWAIT-LATCH call returns immediately."
 
 (defun await-latch (latch &key timeout scope)
   "Block until LATCH's count reaches zero, then return T. With TIMEOUT
-(seconds), signals OPERATION-TIMED-OUT if it does not open in time. With
-SCOPE, also unblocks and signals TASK-CANCELLED if SCOPE is cancelled first."
-  (let ((waker (and scope (%countdown-latch-waker latch))))
-    (when waker
-      (%scope-add-waker scope waker))
-    (unwind-protect
-        (with-lock-held
-            ((countdown-latch-lock latch))
-          (%with-deadline-wait (result (countdown-latch-condition-variable latch)
-                                (countdown-latch-lock latch)
-                                (%deadline-from-timeout timeout) timeout :await-latch)
-              (progn
-                (when scope (check-cancelled scope))
-                (zerop (countdown-latch-count latch)))
-            result))
+(a CL-DATE-KIT:DURATION), signals OPERATION-TIMED-OUT if it does not open in
+time. With SCOPE, also unblocks and signals TASK-CANCELLED if SCOPE is
+cancelled first."
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (let ((waker (and scope (%countdown-latch-waker latch))))
       (when waker
-        (%scope-remove-waker scope waker)))))
+        (%scope-add-waker scope waker))
+      (unwind-protect
+          (with-lock-held
+              ((countdown-latch-lock latch))
+            (%with-deadline-wait (result (countdown-latch-condition-variable latch)
+                                  (countdown-latch-lock latch)
+                                  (%deadline-from-timeout timeout) timeout :await-latch)
+                (progn
+                  (when scope (check-cancelled scope))
+                  (zerop (countdown-latch-count latch)))
+              result))
+        (when waker
+          (%scope-remove-waker scope waker))))))
 
 ;;; Cyclic barriers
 
@@ -119,47 +121,48 @@ or RESET-BARRIER -- until RESET-BARRIER is called."
 has also arrived. Returns 0 to whichever caller arrives last, and a positive
 arrival index (counting from 1) to every other caller.
 
-A TIMEOUT (seconds) or a cancelled SCOPE breaks the current generation for
-every party and signals OPERATION-TIMED-OUT or TASK-CANCELLED respectively;
-every other party still waiting in that generation instead signals
-BARRIER-BROKEN. Call RESET-BARRIER before BARRIER can be used again."
-  (let ((waker (and scope (%barrier-waker barrier))))
-    (when waker
-      (%scope-add-waker scope waker))
-    (unwind-protect
-        (handler-case
-            (with-lock-held
-                ((%barrier-lock barrier))
-              (when (%barrier-broken-p barrier)
-                (error 'barrier-broken :barrier barrier))
-              (let ((generation (%barrier-generation barrier))
-                    (arrival-index (%barrier-waiting barrier)))
-                (incf (%barrier-waiting barrier))
-                (flet ((release-as-last-party ()
-                         (setf (%barrier-waiting barrier) 0)
-                         (incf (%barrier-generation barrier))
-                         (condition-broadcast (%barrier-condition-variable barrier))
-                         0)
-                       (wait-for-release ()
-                         (%with-deadline-wait (result (%barrier-condition-variable barrier)
-                                               (%barrier-lock barrier)
-                                               (%deadline-from-timeout timeout) timeout :await-barrier)
-                             (progn
-                               (when scope (check-cancelled scope))
-                               (cond
-                                 ((eql generation (%barrier-last-broken-generation barrier)) :broken)
-                                 ((/= generation (%barrier-generation barrier)) :advanced)))
-                           (ecase result
-                             (:broken (error 'barrier-broken :barrier barrier))
-                             (:advanced (1+ arrival-index))))))
-                  (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
-                      (release-as-last-party)
-                      (wait-for-release)))))
-          ((or task-cancelled operation-timed-out) (condition)
-            (with-lock-held ((%barrier-lock barrier)) (%break-barrier barrier))
-            (error condition)))
+A TIMEOUT (a CL-DATE-KIT:DURATION) or a cancelled SCOPE breaks the current
+generation for every party and signals OPERATION-TIMED-OUT or TASK-CANCELLED
+respectively; every other party still waiting in that generation instead
+signals BARRIER-BROKEN. Call RESET-BARRIER before BARRIER can be used again."
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (let ((waker (and scope (%barrier-waker barrier))))
       (when waker
-        (%scope-remove-waker scope waker)))))
+        (%scope-add-waker scope waker))
+      (unwind-protect
+          (handler-case
+              (with-lock-held
+                  ((%barrier-lock barrier))
+                (when (%barrier-broken-p barrier)
+                  (error 'barrier-broken :barrier barrier))
+                (let ((generation (%barrier-generation barrier))
+                      (arrival-index (%barrier-waiting barrier)))
+                  (incf (%barrier-waiting barrier))
+                  (flet ((release-as-last-party ()
+                           (setf (%barrier-waiting barrier) 0)
+                           (incf (%barrier-generation barrier))
+                           (condition-broadcast (%barrier-condition-variable barrier))
+                           0)
+                         (wait-for-release ()
+                           (%with-deadline-wait (result (%barrier-condition-variable barrier)
+                                                 (%barrier-lock barrier)
+                                                 (%deadline-from-timeout timeout) timeout :await-barrier)
+                               (progn
+                                 (when scope (check-cancelled scope))
+                                 (cond
+                                   ((eql generation (%barrier-last-broken-generation barrier)) :broken)
+                                   ((/= generation (%barrier-generation barrier)) :advanced)))
+                             (ecase result
+                               (:broken (error 'barrier-broken :barrier barrier))
+                               (:advanced (1+ arrival-index))))))
+                    (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
+                        (release-as-last-party)
+                        (wait-for-release)))))
+            ((or task-cancelled operation-timed-out) (condition)
+              (with-lock-held ((%barrier-lock barrier)) (%break-barrier barrier))
+              (error condition)))
+        (when waker
+          (%scope-remove-waker scope waker))))))
 
 (defun reset-barrier (barrier)
   "Abandon BARRIER's current generation -- every party still waiting in it

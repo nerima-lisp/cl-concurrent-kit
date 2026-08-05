@@ -19,7 +19,7 @@ ordering guarantee changes."
           (funcall map-function 2 (lambda (x) (when (= x 2) (error "boom")) x) input
                    :buffer-size 2)
         (declare (ignore output))
-        (signals error (await completion :timeout 2)))))
+        (signals error (await completion :timeout +test-timeout-long+)))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
@@ -28,9 +28,9 @@ ordering guarantee changes."
       (with-task-scope (scope)
         (multiple-value-bind (output completion)
             (funcall map-function 2 (function identity) input :scope scope)
-          (expect (sort (drain-channel output :timeout 2) (function <))
+          (expect (sort (drain-channel output :timeout +test-timeout-long+) (function <))
                   :to-equal (list 1 2 3))
-          (await completion :timeout 2)))))
+          (await completion :timeout +test-timeout-long+)))))
 
   (it "bounds worker count by the EXECUTOR's own thread and queue capacity"
     (let ((input (make-channel :buffer-size 3)))
@@ -39,17 +39,17 @@ ordering guarantee changes."
       (with-executor (executor :size 2)
         (multiple-value-bind (output completion)
             (funcall map-function 5 (lambda (x) (* x x)) input :executor executor)
-          (expect (sort (drain-channel output :timeout 2) (function <))
+          (expect (sort (drain-channel output :timeout +test-timeout-long+) (function <))
                   :to-equal (list 1 4 9))
-          (await completion :timeout 2)))))
+          (await completion :timeout +test-timeout-long+)))))
 
   (it "fails the completion promise synchronously when a worker fails to start on an already shut-down EXECUTOR"
     (let ((input (make-channel))
           (executor (make-executor :size 1)))
       (shutdown-executor executor :wait t)
       (multiple-value-bind (output completion) (funcall map-function 2 (function identity) input :executor executor)
-        (signals executor-shut-down (await completion :timeout 1))
-        (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)))))
+        (signals executor-shut-down (await completion :timeout +test-timeout+))
+        (expect (nth-value 1 (recv output :timeout +test-timeout+)) :to-be nil)))))
 
 (describe "channel-map-concurrent"
   (it "preserves input order in the output despite out-of-order completion"
@@ -58,9 +58,9 @@ ordering guarantee changes."
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-map-concurrent 3 (lambda (delay) (sleep delay) delay) input)
-        (expect (drain-channel output :timeout 2)
+        (expect (drain-channel output :timeout +test-timeout-long+)
                 :to-equal (list 0.03 0.01 0.02))
-        (await completion :timeout 2))))
+        (await completion :timeout +test-timeout-long+))))
 
   (%test-worker-pool-common-behavior (function channel-map-concurrent)))
 
@@ -74,18 +74,18 @@ ordering guarantee changes."
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-map-unordered 2 (lambda (delay) (sleep delay) delay) input)
-        (expect (recv output :timeout 2) :to-be 0.0)
-        (expect (recv output :timeout 2) :to-be 0.05)
-        (await completion :timeout 2))))
+        (expect (recv output :timeout +test-timeout-long+) :to-be 0.0)
+        (expect (recv output :timeout +test-timeout-long+) :to-be 0.05)
+        (await completion :timeout +test-timeout-long+))))
 
   (it "emits the same set of results as its input, regardless of order"
     (let ((input (make-channel :buffer-size 4)))
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-map-unordered 4 (lambda (x) (* x x)) input)
-        (expect (sort (drain-channel output :timeout 2) (function <))
+        (expect (sort (drain-channel output :timeout +test-timeout-long+) (function <))
                 :to-equal (list 1 4 9 16))
-        (await completion :timeout 2))))
+        (await completion :timeout +test-timeout-long+))))
 
   (%test-worker-pool-common-behavior (function channel-map-unordered)))
 
@@ -96,10 +96,10 @@ ordering guarantee changes."
       (send a 1) (send a 2) (close-channel a)
       (send b :x) (send b :y) (close-channel b)
       (multiple-value-bind (output completion) (channel-merge (list a b))
-        (let ((received (drain-channel output :timeout 1)))
+        (let ((received (drain-channel output :timeout +test-timeout+)))
           (expect (sort (remove-if-not (function numberp) received) (function <)) :to-equal (list 1 2))
           (expect (remove-if-not (function keywordp) received) :to-equal (list :x :y)))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "closes the output only once every input is closed and drained"
     (let ((a (make-channel :buffer-size 1))
@@ -107,11 +107,11 @@ ordering guarantee changes."
       (send a :only)
       (close-channel a)
       (multiple-value-bind (output completion) (channel-merge (list a b))
-        (expect (recv output :timeout 1) :to-be :only)
-        (signals operation-timed-out (recv output :timeout 0.05))
+        (expect (recv output :timeout +test-timeout+) :to-be :only)
+        (signals operation-timed-out (recv output :timeout +test-timeout-expiry+))
         (close-channel b)
-        (expect (nth-value 1 (recv output :timeout 1)) :to-be nil)
-        (await completion :timeout 1))))
+        (expect (nth-value 1 (recv output :timeout +test-timeout+)) :to-be nil)
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((a (make-channel :buffer-size 2))
@@ -120,9 +120,9 @@ ordering guarantee changes."
       (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-merge (list a b) :scope scope)
-          (expect (sort (drain-channel output :timeout 1) (function <))
+          (expect (sort (drain-channel output :timeout +test-timeout+) (function <))
                   :to-equal (list 1 2))
-          (await completion :timeout 1)))))
+          (await completion :timeout +test-timeout+)))))
 
   (it-fuzz "merges any number of already-closed channels without hanging, preserving total count"
       ((per-channel-values
@@ -136,12 +136,12 @@ ordering guarantee changes."
                                  channel))
                              per-channel-values)))
       (multiple-value-bind (output completion) (channel-merge channels)
-        (let ((merged (drain-channel output :timeout 2))
+        (let ((merged (drain-channel output :timeout +test-timeout-long+))
               (expected-count (reduce (function +) per-channel-values :key (function length))))
           (unless (= (length merged) expected-count)
             (error "expected ~D merged values from ~D channels, got ~D"
                    expected-count (length channels) (length merged)))
-          (await completion :timeout 2))))))
+          (await completion :timeout +test-timeout-long+))))))
 
 (describe "channel-zip"
   (it "combines one value from every input into ordered tuples"
@@ -152,9 +152,9 @@ ordering guarantee changes."
       (close-channel a)
       (close-channel b)
       (multiple-value-bind (output completion) (channel-zip (list a b))
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list (list 1 :a) (list 2 :b)))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "stops at the shortest input"
     (let ((a (make-channel :buffer-size 3))
@@ -164,9 +164,9 @@ ordering guarantee changes."
       (close-channel a)
       (close-channel b)
       (multiple-value-bind (output completion) (channel-zip (list a b))
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list (list 1 :only)))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((a (make-channel :buffer-size 2))
@@ -177,9 +177,9 @@ ordering guarantee changes."
       (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-zip (list a b) :scope scope)
-          (expect (drain-channel output :timeout 1)
+          (expect (drain-channel output :timeout +test-timeout+)
                   :to-equal (list (list 1 :a) (list 2 :b)))
-          (await completion :timeout 1))))))
+          (await completion :timeout +test-timeout+))))))
 
 (describe "channel-concat"
   (it "drains each channel fully, in collection order, before the next"
@@ -188,9 +188,9 @@ ordering guarantee changes."
       (send a 1) (send a 2) (close-channel a)
       (send b 3) (send b 4) (close-channel b)
       (multiple-value-bind (output completion) (channel-concat (list a b))
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 2 3 4))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((a (make-channel :buffer-size 2))
@@ -199,9 +199,9 @@ ordering guarantee changes."
       (send b 3) (send b 4) (close-channel b)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-concat (list a b) :scope scope)
-          (expect (drain-channel output :timeout 1)
+          (expect (drain-channel output :timeout +test-timeout+)
                   :to-equal (list 1 2 3 4))
-          (await completion :timeout 1))))))
+          (await completion :timeout +test-timeout+))))))
 
 (describe "channel-concat-map"
   (it "applies FUNCTION and drains each returned channel fully before the next value"
@@ -210,9 +210,9 @@ ordering guarantee changes."
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-concat-map (lambda (x) (nth-value 0 (channel-from-sequence (list x (* x 10))))) input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 10 2 20))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 2)))
@@ -222,9 +222,9 @@ ordering guarantee changes."
         (multiple-value-bind (output completion)
             (channel-concat-map (lambda (x) (nth-value 0 (channel-from-sequence (list x (* x 10)))))
                                  input :scope scope)
-          (expect (drain-channel output :timeout 1)
+          (expect (drain-channel output :timeout +test-timeout+)
                   :to-equal (list 1 10 2 20))
-          (await completion :timeout 1))))))
+          (await completion :timeout +test-timeout+))))))
 
 (describe "channel-merge-map"
   (it "merges values from every inner channel FUNCTION returns"
@@ -234,9 +234,9 @@ ordering guarantee changes."
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-merge-map (lambda (xs) (nth-value 0 (channel-from-sequence xs))) input :parallelism 2)
-        (expect (sort (drain-channel output :timeout 1) (function <))
+        (expect (sort (drain-channel output :timeout +test-timeout+) (function <))
                 :to-equal (list 1 2 3 4))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 2)))
@@ -247,9 +247,9 @@ ordering guarantee changes."
         (multiple-value-bind (output completion)
             (channel-merge-map (lambda (xs) (nth-value 0 (channel-from-sequence xs))) input
                                 :parallelism 2 :scope scope)
-          (expect (sort (drain-channel output :timeout 1) (function <))
+          (expect (sort (drain-channel output :timeout +test-timeout+) (function <))
                   :to-equal (list 1 2 3 4))
-          (await completion :timeout 1))))))
+          (await completion :timeout +test-timeout+))))))
 
 (describe "channel-switch-map"
   (it "forwards only the most recently returned inner channel's values"
@@ -267,11 +267,11 @@ ordering guarantee changes."
       (multiple-value-bind (output completion) (channel-switch-map (function identity) input)
         (declare (ignore completion))
         (send second-inner :from-second)
-        (expect (recv output :timeout 1) :to-be :from-second)
+        (expect (recv output :timeout +test-timeout+) :to-be :from-second)
         ;; FIRST-INNER was switched away from before it ever produced a
         ;; value; sent even now, it should never reach OUTPUT.
         (send first-inner :from-first)
-        (signals operation-timed-out (recv output :timeout 0.1)))))
+        (signals operation-timed-out (recv output :timeout (cl-date-kit:duration-of-millis 100))))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 1))
@@ -282,5 +282,5 @@ ordering guarantee changes."
         (multiple-value-bind (output completion) (channel-switch-map (function identity) input :scope scope)
           (send inner :value)
           (close-channel inner)
-          (expect (recv output :timeout 1) :to-be :value)
-          (await completion :timeout 1))))))
+          (expect (recv output :timeout +test-timeout+) :to-be :value)
+          (await completion :timeout +test-timeout+))))))

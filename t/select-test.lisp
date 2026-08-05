@@ -34,7 +34,7 @@
    "runs :TIMEOUT without waiting or registering waiters when its deadline has already expired"
    (let ((channel (make-channel :buffer-size 1)))
      (expect
-      (select ((recv channel) (v) (list :recv v)) (:timeout 0 () :expired))
+      (select ((recv channel) (v) (list :recv v)) (:timeout (cl-date-kit:duration-zero) () :expired))
       :to-be
       :expired)
      (expect (hash-table-count (cl-concurrent-kit::channel-waiters channel)) :to-be 0)))
@@ -60,11 +60,11 @@
           (full (make-channel :buffer-size 1)))
       (send full :occupied)
       (expect
-        (select ((recv empty) (value) (list :recv value)) (:timeout 0.05d0 () :gave-up))
+        (select ((recv empty) (value) (list :recv value)) (:timeout +test-timeout-expiry+ () :gave-up))
         :to-be
         :gave-up)
       (expect
-        (select ((send full :next) () :sent) (:timeout 0.05d0 () :gave-up))
+        (select ((send full :next) () :sent) (:timeout +test-timeout-expiry+ () :gave-up))
         :to-be
         :gave-up)
       (expect (recv full) :to-be :occupied)))
@@ -73,7 +73,7 @@
    (let ((channel (make-channel :buffer-size 1)))
      (send channel :ready)
      (expect
-      (select ((recv channel) (value) value) (:timeout 0 () :expired))
+      (select ((recv channel) (value) value) (:timeout (cl-date-kit:duration-zero) () :expired))
       :to-be
       :ready)
      (expect (hash-table-count (cl-concurrent-kit::channel-waiters channel)) :to-be 0)))
@@ -82,7 +82,7 @@
     (let* ((channel (make-channel))
            (consumer (future (recv channel))))
       (expect (select ((send channel :sent-via-select) () :sent)) :to-be :sent)
-      (expect (await consumer :timeout 1) :to-be :sent-via-select)))
+      (expect (await consumer :timeout +test-timeout+) :to-be :sent-via-select)))
   (it
     "does not choose an unready SEND clause; falls through to DEFAULT instead"
     (let ((channel (make-channel :buffer-size 1)))
@@ -106,7 +106,7 @@
     "rejects a SELECT form that combines :DEFAULT and :TIMEOUT"
     (signals
       error
-      (macroexpand-1 `(select (:default () :default) (:timeout 0.01d0 () :timed-out)))))
+      (macroexpand-1 `(select (:default () :default) (:timeout +test-timeout-brief+ () :timed-out)))))
   (it
     "rejects a SELECT form with no channel operation"
     (signals error (macroexpand-1 `(select))))
@@ -134,8 +134,8 @@
       (macroexpand-1
         `(select
           ((recv channel) () :received)
-          (:timeout 0.01d0 () :first)
-          (:timeout 0.02d0 () :second))))))
+          (:timeout +test-timeout-brief+ () :first)
+          (:timeout (cl-date-kit:duration-of-millis 20) () :second))))))
 
 (describe
   "select argument evaluation"
@@ -156,7 +156,7 @@
                 :next))
             ()
             :sent)
-          (:timeout 0.02d0 () :timed-out))
+          (:timeout (cl-date-kit:duration-of-millis 20) () :timed-out))
         :to-be
         :timed-out)
       (expect channel-evaluations :to-be 1)
@@ -173,7 +173,7 @@
           (:timeout
             (progn
               (incf timeout-evaluations)
-              1)
+              +test-timeout+)
             ()
             :timed-out))
         :to-be
@@ -190,7 +190,7 @@
     "removes its waiter after a timeout"
     (let ((channel (make-channel)))
       (expect
-        (select ((recv channel) (value) value) (:timeout 0.01 () nil))
+        (select ((recv channel) (value) value) (:timeout +test-timeout-brief+ () nil))
         :to-be
         nil)
       (expect
@@ -265,7 +265,7 @@
         (select
           ((recv blocked) () :received)
           (:timeout
-            0
+            (cl-date-kit:duration-zero)
             ()
             (declare (optimize (speed 3)))
             :timeout))
@@ -309,7 +309,7 @@
         (select
           ((recv channel) (value) value)
           ((recv channel) (value) value)
-          (:timeout 0.01d0 () :timed-out))
+          (:timeout +test-timeout-brief+ () :timed-out))
         :to-be
         :timed-out)
       (expect

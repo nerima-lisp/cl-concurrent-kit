@@ -17,7 +17,8 @@
 signaling if more than one :DEFAULT or :TIMEOUT clause is given, if both
 appear together, or if no channel operation clause is given at all. OPERATIONS
 is a list of (:RECV channel-form value-variable body) or (:SEND channel-form
-value-form body) entries, in clause order. TIMEOUT, if any, is (SECONDS . BODY)."
+value-form body) entries, in clause order. TIMEOUT, if any, is (DURATION-FORM
+. BODY)."
   (let ((operations nil)
         (default-body nil)
         (default-seen-p nil)
@@ -33,8 +34,8 @@ value-form body) entries, in clause order. TIMEOUT, if any, is (SECONDS . BODY).
         (:timeout
          (when timeout
            (error "SELECT: at most one :TIMEOUT clause is allowed"))
-         (destructuring-bind (seconds () &body body) (rest clause)
-           (setf timeout (cons seconds body))))
+         (destructuring-bind (duration () &body body) (rest clause)
+           (setf timeout (cons duration body))))
         (:operation
          (destructuring-bind ((operator &rest arguments) bindings &body body) clause
            (push
@@ -101,6 +102,7 @@ instant TRY-SEND succeeds."
       (%select-parse-clauses clauses)
     (let* ((waiter (gensym "WAITER"))
            (deadline (gensym "DEADLINE"))
+           (timeout-duration (gensym "TIMEOUT-DURATION"))
            (block (gensym "SELECT"))
            (bindings (%select-bindings ordered))
            (binding-forms
@@ -127,7 +129,11 @@ instant TRY-SEND succeeds."
                    collect `(%channel-remove-waiter ,(second binding) ,waiter)))
            (probe-forms (%select-probe-forms bindings block)))
       `(let* (,@binding-forms
-              (,deadline ,(when timeout `(%deadline-from-timeout ,(car timeout)))))
+              (,deadline ,(when timeout
+                            `(%deadline-from-timeout
+                              (let ((,timeout-duration ,(car timeout)))
+                                (and ,timeout-duration
+                                     (cl-date-kit:duration-to-seconds ,timeout-duration)))))))
          (block ,block
            ,@probe-forms
            ,(when default-seen-p
@@ -157,12 +163,13 @@ ready first. Each clause is one of:
   ((recv channel-form) (value-var) body...)
   ((send channel-form value-form) () body...)
   (:default () body...)
-  (:timeout seconds-form () body...)
+  (:timeout duration-form () body...)
 
 :DEFAULT, if present, runs immediately when no other clause is ready.
 :TIMEOUT, if present, runs if no other clause becomes ready within
-SECONDS-FORM. At most one of the two may appear. If neither appears, SELECT
-blocks until some clause is ready. SELECT returns whatever the chosen
+DURATION-FORM, which must evaluate to a CL-DATE-KIT:DURATION (or NIL, for no
+deadline at all). At most one of the two may appear. If neither appears,
+SELECT blocks until some clause is ready. SELECT returns whatever the chosen
 clause's body returns.
 
 Expanded entirely at compile time by %EXPAND-SELECT above: every clause's

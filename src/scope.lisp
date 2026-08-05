@@ -28,13 +28,13 @@ call rather than one more indirection through a stored function -- for the
 dynamic extent of BODY. Every task started with (SPAWN SCOPE-VAR ...) is
 guaranteed to have finished before WITH-TASK-SCOPE returns.
 
-TIMEOUT (seconds) bounds only the wait for already-running children once
-BODY itself has returned or signalled; on expiry every remaining child is
-cancelled cooperatively and OPERATION-TIMED-OUT is signaled, naming
-:WITH-TASK-SCOPE as the operation. WITH-TIMEOUT signals that same condition
-type naming :WITH-TIMEOUT, so a handler around a scope whose BODY uses
-WITH-TIMEOUT must read OPERATION-TIMED-OUT-OPERATION to tell which of the two
-deadlines expired.
+TIMEOUT (a CL-DATE-KIT:DURATION) bounds only the wait for already-running
+children once BODY itself has returned or signalled; on expiry every
+remaining child is cancelled cooperatively and OPERATION-TIMED-OUT is
+signaled, naming :WITH-TASK-SCOPE as the operation. WITH-TIMEOUT signals that
+same condition type naming :WITH-TIMEOUT, so a handler around a scope whose
+BODY uses WITH-TIMEOUT must read OPERATION-TIMED-OUT-OPERATION to tell which
+of the two deadlines expired.
 
 If BODY itself signals, that condition propagates after every child has been
 cancelled and awaited; if BODY returns normally but one or more children

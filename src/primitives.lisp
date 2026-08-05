@@ -121,22 +121,30 @@ WAIT-ON-SEMAPHORE."
 ;;; computed once, so a loop that wakes up repeatedly (spurious wakeups,
 ;;; broadcasts meant for a different waiter) converges on the same deadline
 ;;; instead of restarting a fresh N-second wait on every iteration.
+(defvar *clock* (cl-boundary-kit:make-clock)
+  "The CL-BOUNDARY-KIT:CLOCK consulted by deadline arithmetic
+(%DEADLINE-FROM-TIMEOUT, %SECONDS-UNTIL-DEADLINE, and WITH-TIMEOUT's own
+expiry check in src/timeout.lisp). Rebind to a CL-BOUNDARY-KIT:FAKE-CLOCK via
+LET to make deadline arithmetic deterministic in tests. Real blocking waits
+-- CONDITION-WAIT, WAIT-ON-SEMAPHORE, SB-EXT:WITH-TIMEOUT -- do not consult
+this variable and cannot be sped up by advancing a fake clock bound here;
+only the deadline math itself becomes testable this way.")
 (defun %deadline-from-timeout (timeout)
-  "Return an absolute GET-INTERNAL-REAL-TIME value TIMEOUT seconds from now,
+  "Return an absolute *CLOCK* CLOCK-MONOTONIC value TIMEOUT seconds from now,
 or NIL if TIMEOUT is NIL (no deadline)."
   (when timeout
-    (+ (get-internal-real-time) (round (* timeout internal-time-units-per-second)))))
+    (+ (cl-boundary-kit:clock-monotonic *clock*) (round (* timeout internal-time-units-per-second)))))
 
 (defun %seconds-until-deadline (deadline)
   "%DEADLINE-FROM-TIMEOUT's inverse: the number of seconds remaining until
-DEADLINE (an absolute GET-INTERNAL-REAL-TIME value), floored at 0.0d0 once
+DEADLINE (an absolute *CLOCK* CLOCK-MONOTONIC value), floored at 0.0d0 once
 DEADLINE has already passed. DEADLINE must be non-NIL -- callers with an
 optional deadline guard this themselves, since \"no deadline\" and \"zero
 seconds remaining\" need different handling from whatever they pass the
 result to next (SB-THREAD:CONDITION-WAIT and WAIT-ON-SEMAPHORE treat a NIL
 :TIMEOUT as unbounded, not as already-expired)."
   (max 0.0d0
-       (/ (- deadline (get-internal-real-time))
+       (/ (- deadline (cl-boundary-kit:clock-monotonic *clock*))
           (float internal-time-units-per-second 0.0d0))))
 
 (defmacro %wait-until ((condition-variable lock deadline) &body predicate-forms)

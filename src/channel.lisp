@@ -80,6 +80,21 @@ linearized with concurrent SEND/RECV.")
     (let ((capacity (max 1 buffer-size)))
       (%make-channel buffer-size capacity (make-array capacity)))))
 
+;;; State-transition notification
+;;;
+;;; One mask names which transitions a locked state change makes possible, so
+;;; SEND/RECV/CLOSE-CHANNEL each describe what they did once and %CHANNEL-NOTIFY
+;;; works out who to wake. The bits below 8 are also the interest vocabulary a
+;;; multi-channel waiter registers with; +CHANNEL-NOTIFY-CLOSE+ sits outside
+;;; that 3-bit space deliberately, since a close ends every pending operation
+;;; regardless of interest.
+;;;
+;;; %CHANNEL-NOTIFY handles this channel's own condition variables inline and
+;;; tail-calls %CHANNEL-NOTIFY-WAITERS -- defined in SRC/CHANNEL-WAITERS.LISP,
+;;; which loads after this file -- only when a waiter is actually registered.
+;;; The constants and the macro stay here rather than moving with the rest of
+;;; the waiter subsystem because SEND, TRY-SEND, %CHANNEL-DEQUEUE and
+;;; CLOSE-CHANNEL below expand them at compile time.
 (defconstant +channel-notify-send+ #b0001)
 
 (defconstant +channel-notify-recv+ #b0010)
@@ -88,138 +103,62 @@ linearized with concurrent SEND/RECV.")
 
 (defconstant +channel-notify-close+ #b1000)
 
-(defun %channel-waiter-bucket (channel interests)
-  "Return the bucket for CHANNEL and the merged INTERESTS mask."
-  (let ((buckets
-        (or
-          (channel-waiter-buckets channel)
-          (setf (channel-waiter-buckets channel) (make-array 8 :initial-element nil)))))
-    (or
-      (aref buckets interests)
-      (setf (aref buckets interests) (make-hash-table :test (function eq))))))
-
-(progn
-  (defun %channel-notify-waiters (channel notifications close-p)
-    (declare (type channel channel)
-             (type (unsigned-byte 4) notifications)
-             (type boolean close-p))
-    (unless (or close-p (logtest notifications (channel-waiter-interests channel)))
-      (return-from %channel-notify-waiters))
-    (flet ((notify-bucket (interests)
-             (let ((bucket (aref (channel-waiter-buckets channel) interests)))
-            (when bucket
-              (maphash
-                (lambda (semaphore present-p)
-                  (declare (ignore present-p))
-                  (signal-semaphore semaphore))
-                bucket)))))
-      (if close-p (loop for interests fixnum from 0 below 8
-              do (notify-bucket interests))
-        (loop for interests fixnum from 1 below 8
-              when (logtest notifications interests)
-                do (notify-bucket interests)))))
-  (defmacro %channel-notify (channel notifications)
-    "Notify waiters affected by a locked CHANNEL state transition."
-    (let ((channel-var (gensym "CHANNEL-"))
-          (notifications-var (gensym "NOTIFICATIONS-"))
-          (close-p-var (gensym "CLOSE-P-")))
-      `(let* ((,channel-var ,channel)
-             (,notifications-var ,notifications)
-             (,close-p-var (logtest +channel-notify-close+ ,notifications-var)))
-        (declare (type channel ,channel-var)
-                 (type (unsigned-byte 4) ,notifications-var))
-        (if ,close-p-var (progn
-            (condition-broadcast (channel-send-condition-variable ,channel-var))
-            (condition-broadcast (channel-recv-condition-variable ,channel-var))
-            (condition-broadcast (channel-rendezvous-condition-variable ,channel-var)))
-          (progn
-            (when (logtest +channel-notify-send+ ,notifications-var)
-              (condition-notify (channel-send-condition-variable ,channel-var)))
-            (when (logtest +channel-notify-recv+ ,notifications-var)
-              (condition-notify (channel-recv-condition-variable ,channel-var)))
-            (when (logtest +channel-notify-rendezvous+ ,notifications-var)
-              (condition-notify (channel-rendezvous-condition-variable ,channel-var)))))
-        (when (plusp (channel-waiter-count ,channel-var))
-          (%channel-notify-waiters ,channel-var ,notifications-var ,close-p-var))))))
-
-(defun %channel-add-waiter (channel semaphore &optional (interests #b0111))
-  "Register SEMAPHORE to be signaled when CHANNEL state matches INTERESTS."
-  (declare (type channel channel)
-           (type (unsigned-byte 3) interests))
-  (check-type interests (unsigned-byte 3))
-  (%with-channel-lock
-    (channel)
-    (multiple-value-bind (registered-interests present-p) (gethash semaphore (channel-waiters channel))
-      (let* ((registered-interests
-            (if present-p (the (unsigned-byte 3) registered-interests)
-              0))
-             (merged-interests
-            (the (unsigned-byte 3) (logior registered-interests interests)))
-             (new-interests
-            (the (unsigned-byte 3) (logandc2 merged-interests registered-interests)))
-             (changed-p (not (and present-p (= registered-interests merged-interests)))))
-        (declare (type (unsigned-byte 3) registered-interests merged-interests new-interests))
-        (when changed-p
-          (when present-p
-            (remhash semaphore (aref (channel-waiter-buckets channel) registered-interests)))
-          (setf (gethash semaphore (channel-waiters channel)) merged-interests
-                (gethash semaphore (%channel-waiter-bucket channel merged-interests)) t
-                (channel-waiter-interests channel) (the
-              (unsigned-byte 3)
-              (logior (channel-waiter-interests channel) new-interests)))
-          (loop for bit fixnum from 0 below 3
-                when (logbitp bit new-interests)
-                  do (incf (aref (channel-waiter-interest-counts channel) bit)))
-          (unless present-p
-            (incf (channel-waiter-count channel))))))))
-
-(defun %channel-remove-waiter (channel semaphore)
-  (%with-channel-lock
-    (channel)
-    (multiple-value-bind (interests present-p) (gethash semaphore (channel-waiters channel))
-      (when present-p
-        (remhash semaphore (channel-waiters channel))
-        (remhash semaphore (aref (channel-waiter-buckets channel) interests))
-        (loop for bit fixnum from 0 below 3
-              when (logbitp bit interests)
-                do (let ((remaining (decf (aref (channel-waiter-interest-counts channel) bit))))
-            (when (zerop remaining)
-              (setf (channel-waiter-interests channel) (the
-                  (unsigned-byte 3)
-                  (logandc2 (channel-waiter-interests channel) (ash 1 bit)))))))
-        (decf (channel-waiter-count channel))))))
+(defmacro %channel-notify (channel notifications)
+  "Notify waiters affected by a locked CHANNEL state transition."
+  (let ((channel-var (gensym "CHANNEL-"))
+        (notifications-var (gensym "NOTIFICATIONS-"))
+        (close-p-var (gensym "CLOSE-P-")))
+    `(let* ((,channel-var ,channel)
+            (,notifications-var ,notifications)
+            (,close-p-var (logtest +channel-notify-close+ ,notifications-var)))
+       (declare (type channel ,channel-var)
+                (type (unsigned-byte 4) ,notifications-var))
+       (if ,close-p-var (progn
+                          (condition-broadcast (channel-send-condition-variable ,channel-var))
+                          (condition-broadcast (channel-recv-condition-variable ,channel-var))
+                          (condition-broadcast (channel-rendezvous-condition-variable ,channel-var)))
+           (progn
+             (when (logtest +channel-notify-send+ ,notifications-var)
+               (condition-notify (channel-send-condition-variable ,channel-var)))
+             (when (logtest +channel-notify-recv+ ,notifications-var)
+               (condition-notify (channel-recv-condition-variable ,channel-var)))
+             (when (logtest +channel-notify-rendezvous+ ,notifications-var)
+               (condition-notify (channel-rendezvous-condition-variable ,channel-var)))))
+       (when (plusp (channel-waiter-count ,channel-var))
+         (%channel-notify-waiters ,channel-var ,notifications-var ,close-p-var)))))
 
 (defun send (channel value &key timeout)
   "Send VALUE on CHANNEL, blocking while it is full (buffered) or until a RECV
-takes VALUE back out (unbuffered). With TIMEOUT (seconds), signals
-OPERATION-TIMED-OUT if it does not complete in time. Signals CHANNEL-CLOSED if
-CHANNEL is already closed."
+takes VALUE back out (unbuffered). With TIMEOUT (a CL-DATE-KIT:DURATION),
+signals OPERATION-TIMED-OUT if it does not complete in time. Signals
+CHANNEL-CLOSED if CHANNEL is already closed."
   (declare (type channel channel))
-  (%with-channel-lock (channel)
-    (let* ((deadline (%deadline-from-timeout timeout))
-           (unbuffered-p (zerop (channel-buffer-size channel)))
-           (generation nil)
-           (capacity (channel-capacity channel)))
-      (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel)
-                            deadline timeout :send)
-          (cond
-            ((channel-closed-p channel) :closed)
-            ((< (channel-count channel) capacity) :ready))
-        (when (eq room :closed)
-          (error 'channel-closed :channel channel)))
-      (when unbuffered-p
-        (setf generation (channel-rendezvous-generation channel)))
-      (%channel-buffer-push channel value)
-      (%channel-notify channel +channel-notify-recv+)
-      (when (and unbuffered-p
-                 (eq :timeout
-                     (%wait-until ((channel-rendezvous-condition-variable channel) (channel-lock channel) deadline)
-                       (/= generation (channel-rendezvous-generation channel))))
-                 (= generation (channel-rendezvous-generation channel)))
-        (when (%channel-remove-unbuffered-message channel)
-          (%channel-notify channel +channel-notify-send+))
-        (error 'operation-timed-out :operation :send :timeout timeout))))
-  t)
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (%with-channel-lock (channel)
+      (let* ((deadline (%deadline-from-timeout timeout))
+             (unbuffered-p (zerop (channel-buffer-size channel)))
+             (generation nil)
+             (capacity (channel-capacity channel)))
+        (%with-deadline-wait (room (channel-send-condition-variable channel) (channel-lock channel)
+                              deadline timeout :send)
+            (cond
+              ((channel-closed-p channel) :closed)
+              ((< (channel-count channel) capacity) :ready))
+          (when (eq room :closed)
+            (error 'channel-closed :channel channel)))
+        (when unbuffered-p
+          (setf generation (channel-rendezvous-generation channel)))
+        (%channel-buffer-push channel value)
+        (%channel-notify channel +channel-notify-recv+)
+        (when (and unbuffered-p
+                   (eq :timeout
+                       (%wait-until ((channel-rendezvous-condition-variable channel) (channel-lock channel) deadline)
+                         (/= generation (channel-rendezvous-generation channel))))
+                   (= generation (channel-rendezvous-generation channel)))
+          (when (%channel-remove-unbuffered-message channel)
+            (%channel-notify channel +channel-notify-send+))
+          (error 'operation-timed-out :operation :send :timeout timeout))))
+    t))
 
 (defun %channel-dequeue (channel)
   "Pop CHANNEL's next queued entry, update COUNT and an unbuffered entry's
@@ -243,17 +182,19 @@ neither caller calls this otherwise."
   "Receive a value from CHANNEL, blocking until one is available or CHANNEL
 is closed. Returns (VALUES VALUE T), or (VALUES NIL NIL) once CHANNEL is
 closed and every value sent before the close has been drained. With TIMEOUT
-(seconds), signals OPERATION-TIMED-OUT if neither happens in time."
+(a CL-DATE-KIT:DURATION), signals OPERATION-TIMED-OUT if neither happens in
+time."
   (declare (type channel channel))
-  (%with-channel-lock (channel)
-    (%with-deadline-wait (ready (channel-recv-condition-variable channel) (channel-lock channel)
-                          (%deadline-from-timeout timeout) timeout :recv)
-        (cond
-          ((plusp (channel-count channel)) :ready)
-          ((channel-closed-p channel) :closed))
-      (case ready
-        (:closed (values nil nil))
-        (:ready (values (%channel-dequeue channel) t))))))
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (%with-channel-lock (channel)
+      (%with-deadline-wait (ready (channel-recv-condition-variable channel) (channel-lock channel)
+                            (%deadline-from-timeout timeout) timeout :recv)
+          (cond
+            ((plusp (channel-count channel)) :ready)
+            ((channel-closed-p channel) :closed))
+        (case ready
+          (:closed (values nil nil))
+          (:ready (values (%channel-dequeue channel) t)))))))
 
 (defun try-send (channel value)
   "Non-blocking SEND: deposit VALUE and return T if room is immediately

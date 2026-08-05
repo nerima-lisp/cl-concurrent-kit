@@ -193,7 +193,15 @@ Returns two values: an output channel and a completion promise. Ownership,
 cancellation, and executor behavior are the same as CHANNEL-MAP."
   (check-type interval (real 0))
   (check-type input channel)
-  (let ((output (make-channel :buffer-size buffer-size)))
+  (let ((output (make-channel :buffer-size buffer-size))
+        ;; SELECT's own :TIMEOUT clause now requires a CL-DATE-KIT:DURATION
+        ;; (the library-wide deadline type); INTERVAL stays a plain
+        ;; non-negative real seconds count in this function's own public
+        ;; contract (a periodic window, not a request deadline -- see
+        ;; CHANNEL-THROTTLE's identical INTERVAL parameter, which never
+        ;; touches SELECT at all), so the conversion happens once here
+        ;; rather than changing what callers pass.
+        (interval-duration (cl-date-kit:duration-of-nanos (round (* interval 1000000000)))))
     (values
      output
      (%with-channel-stage (:scope scope :executor executor :outputs (list output))
@@ -228,7 +236,7 @@ cancellation, and executor behavior are the same as CHANNEL-MAP."
                          (if (and (null value) (channel-closed-p input))
                              (progn (send output pending-value) (return-from debounce))
                              (setf pending-value value)))
-                        (:timeout interval ()
+                        (:timeout interval-duration ()
                          (send output pending-value)
                          (setf pending-p nil)))))
              (loop
@@ -286,77 +294,13 @@ closure, cancellation, and executor behavior are the same as CHANNEL-MAP."
 SCOPE's cancellation before each one and running BODY once per value, until
 INPUT closes -- at which point the loop returns ON-CLOSE -- or BODY itself
 escapes early with (RETURN value). Shared LOOP/RECV/CHECK-CANCELLED skeleton
-behind CHANNEL-REDUCE, CHANNEL-COLLECT, CHANNEL-EACH, CHANNEL-SOME,
-CHANNEL-EVERY, and CHANNEL-FIND below, which differ only in what they
-accumulate along the way and what ON-CLOSE or an early BODY return should be."
+behind src/stream-terminal.lisp's CHANNEL-REDUCE, CHANNEL-COLLECT,
+CHANNEL-EACH, CHANNEL-SOME, CHANNEL-EVERY, and CHANNEL-FIND, and
+src/stream-fan-out.lisp's and src/stream-partition.lisp's own consumers,
+which differ only in what they accumulate along the way and what ON-CLOSE or
+an early BODY return should be."
   `(loop
      (when ,scope (check-cancelled ,scope))
      (multiple-value-bind (,value-var received-p) (recv ,input)
        (unless received-p (return ,on-close))
        ,@body)))
-
-(defun channel-reduce (function initial-value input &key scope executor)
-  "Reduce INPUT with FUNCTION (called with the previous accumulator and the
-next input value) and resolve to its final accumulator value.
-
-Returns a completion promise: INITIAL-VALUE for an empty INPUT, or the final
-accumulator once INPUT closes. With SCOPE, the reducer is a tracked child and
-a reducer failure cancels SCOPE; with EXECUTOR, it runs on that executor.
-Synchronous task-start failures are reported through the returned promise."
-  (check-type input channel)
-  (let ((accumulator initial-value))
-    (%with-channel-stage (:scope scope :executor executor)
-      (%consume-channel (value input scope accumulator)
-        (setf accumulator (funcall function accumulator value))))))
-
-(defun channel-collect (input &key scope executor)
-  "Collect INPUT into a promise for a list of its values in input order.
-
-The promise resolves once INPUT closes, or rejects if INPUT, SCOPE, or
-EXECUTOR fails."
-  (check-type input channel)
-  (let (reversed-values)
-    (%with-channel-stage (:scope scope :executor executor)
-      (%consume-channel (value input scope (nreverse reversed-values))
-        (push value reversed-values)))))
-
-(defun channel-each (function input &key scope executor)
-  "Consume every value from INPUT with FUNCTION, in input order, and return
-a completion promise resolving to NIL once INPUT closes, or rejecting if
-FUNCTION, INPUT, SCOPE, or EXECUTOR fails."
-  (check-type function function)
-  (check-type input channel)
-  (%with-channel-stage (:scope scope :executor executor)
-    (%consume-channel (value input scope nil)
-      (funcall function value))))
-
-(defun channel-some (predicate input &key scope executor)
-  "Resolve to the first truthy result of PREDICATE over INPUT, stopping
-there and leaving later input values available. Resolves to NIL once INPUT
-closes without a match."
-  (check-type predicate function)
-  (check-type input channel)
-  (%with-channel-stage (:scope scope :executor executor)
-    (%consume-channel (value input scope nil)
-      (let ((result (funcall predicate value)))
-        (when result (return result))))))
-
-(defun channel-every (predicate input &key scope executor)
-  "Resolve to T once PREDICATE holds for every value received from INPUT --
-stopping and resolving to NIL after the first false result, and leaving
-later input values available."
-  (check-type predicate function)
-  (check-type input channel)
-  (%with-channel-stage (:scope scope :executor executor)
-    (%consume-channel (value input scope t)
-      (unless (funcall predicate value) (return nil)))))
-
-(defun channel-find (predicate input &key scope executor)
-  "Resolve to the first INPUT value for which PREDICATE is truthy, stopping
-there and leaving later input values available. Resolves to NIL once INPUT
-closes without a match."
-  (check-type predicate function)
-  (check-type input channel)
-  (%with-channel-stage (:scope scope :executor executor)
-    (%consume-channel (value input scope nil)
-      (when (funcall predicate value) (return value)))))

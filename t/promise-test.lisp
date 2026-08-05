@@ -1,8 +1,7 @@
 ;;;; t/promise-test.lisp
 (in-package #:cl-concurrent-kit/test)
 
-(describe
-  "promise"
+(describe-concurrent "promise"
   (it
     "recognizes PROMISE values"
     (let ((promise (make-promise)))
@@ -34,10 +33,10 @@
   (it
     "exposes AWAIT timeout details"
     (let ((promise (make-promise))
-          (timeout 0.05d0))
+          (timeout +test-timeout-expiry+))
       (expect-signals (condition operation-timed-out) (await promise :timeout timeout)
         (expect (operation-timed-out-operation condition) :to-be :await)
-        (expect (operation-timed-out-timeout condition) :to-be timeout))))
+        (expect (operation-timed-out-timeout condition) :to-be (cl-date-kit:duration-to-seconds timeout)))))
   (it
     "AWAIT blocks until another thread delivers, then returns"
     (let* ((promise (make-promise))
@@ -85,7 +84,7 @@
       (cl-concurrent-kit::%deliver-error-if-pending promise (make-condition (quote error)))
       (expect (await promise) :to-be 1))))
 
-(describe "promise-all-settled"
+(describe-concurrent "promise-all-settled"
   (it "settles immediately with an empty list for no input promises"
     (let ((aggregate (cl-concurrent-kit:promise-all-settled nil)))
       (expect (promise-settled-p aggregate) :to-be-truthy)
@@ -99,7 +98,7 @@
                        (list fulfilled failed))))
       (deliver-error failed condition)
       (deliver fulfilled :value)
-      (let ((settlements (await aggregate :timeout 1)))
+      (let ((settlements (await aggregate :timeout +test-timeout+)))
         (with-soft-assertions
           (expect (mapcar #'cl-concurrent-kit:promise-settlement-state settlements)
                   :to-equal (list :fulfilled :failed))
@@ -117,7 +116,7 @@
             do (if succeed-p
                    (deliver promise index)
                    (deliver-error promise (make-condition 'error))))
-      (let ((settlements (await aggregate :timeout 1)))
+      (let ((settlements (await aggregate :timeout +test-timeout+)))
         (expect (length settlements) :to-be (length outcomes))
         (loop for settlement in settlements
               for succeed-p in outcomes
@@ -141,13 +140,13 @@
           (expect (promise-settlement-state (first settlements)) :to-be :fulfilled)
           (expect (promise-settlement-value (first settlements)) :to-be :value))))))
 
-(describe "promise-race"
+(describe-concurrent "promise-race"
   (it "settles fulfilled with whichever promise fulfills first"
     (let* ((first (make-promise))
            (second (make-promise))
            (winner (promise-race (list first second))))
       (deliver first :first-value)
-      (expect (await winner :timeout 1) :to-be :first-value)))
+      (expect (await winner :timeout +test-timeout+) :to-be :first-value)))
 
   (it "settles failed when the first to settle fails"
     (let* ((first (make-promise))
@@ -155,7 +154,7 @@
            (condition (make-condition 'error))
            (winner (promise-race (list first second))))
       (deliver-error first condition)
-      (expect-signals (c error) (await winner :timeout 1) (expect (eq c condition) :to-be-truthy))))
+      (expect-signals (c error) (await winner :timeout +test-timeout+) (expect (eq c condition) :to-be-truthy))))
 
   (it "discards settlements after the first winner without signaling"
     (let* ((first (make-promise))
@@ -163,12 +162,12 @@
            (winner (promise-race (list first second))))
       (deliver first :first-value)
       (deliver second :second-value)
-      (expect (await winner :timeout 1) :to-be :first-value)))
+      (expect (await winner :timeout +test-timeout+) :to-be :first-value)))
 
   (it "signals an error when given no promises"
     (signals error (promise-race nil))))
 
-(describe "promise-then"
+(describe-concurrent "promise-then"
   (it "calls ON-FULFILLED with an already-settled promise's value as its continuation"
     (let ((promise (make-promise)))
       (deliver promise 21)
@@ -208,9 +207,9 @@
            (chained (promise-then promise (lambda (v) (1+ v)))))
       (expect (promise-settled-p chained) :to-be nil)
       (deliver promise 41)
-      (expect (await chained :timeout 1) :to-be 42))))
+      (expect (await chained :timeout +test-timeout+) :to-be 42))))
 
-(describe "future"
+(describe-concurrent "future"
   (it "runs its body on another thread and AWAIT resolves to its value"
     (expect (await (future (+ 1 2 3))) :to-be 6))
   (it
@@ -224,7 +223,7 @@
     (let ((f (future (error "boom in future"))))
       (signals error (await f)))))
 
-(describe "cancel-promise"
+(describe-concurrent "cancel-promise"
   (it "settles a pending promise as failed with PROMISE-CANCELLED"
     (let ((promise (make-promise)))
       (cancel-promise promise :because)
@@ -237,7 +236,7 @@
       (deliver promise 1)
       (signals promise-already-fulfilled (cancel-promise promise)))))
 
-(describe "promise-catch"
+(describe-concurrent "promise-catch"
   (it "passes a fulfilled promise's value through unchanged"
     (let ((promise (make-promise)))
       (deliver promise 42)
@@ -257,7 +256,7 @@
       (let ((chained (promise-catch promise (lambda (c) (declare (ignore c)) (error "in handler")))))
         (signals error (await chained))))))
 
-(describe "promise-finally"
+(describe-concurrent "promise-finally"
   (it "runs FUNCTION and mirrors a fulfilled input's own value, not FUNCTION's"
     (let ((promise (make-promise))
           (ran-p nil))
@@ -280,9 +279,9 @@
       (let ((chained (promise-finally promise (lambda () (error "in finally")))))
         (signals error (await chained))))))
 
-(describe "promise-all"
+(describe-concurrent "promise-all"
   (it "fulfills immediately with NIL for no input promises"
-    (expect (await (promise-all nil) :timeout 1) :to-be nil))
+    (expect (await (promise-all nil) :timeout +test-timeout+) :to-be nil))
 
   (it "fulfills with every value in input order once all inputs fulfill"
     (let ((promises (list (make-promise) (make-promise) (make-promise))))
@@ -290,7 +289,7 @@
         (deliver (third promises) 3)
         (deliver (first promises) 1)
         (deliver (second promises) 2)
-        (expect (await combined :timeout 1) :to-equal (list 1 2 3)))))
+        (expect (await combined :timeout +test-timeout+) :to-equal (list 1 2 3)))))
 
   (it "fails as soon as any input fails, without waiting for the rest"
     (let* ((never-settles (make-promise))
@@ -298,7 +297,7 @@
            (condition (make-condition 'simple-error :format-control "boom"))
            (combined (promise-all (list never-settles failing))))
       (deliver-error failing condition)
-      (expect-signals (c error) (await combined :timeout 1) (expect (eq c condition) :to-be-truthy))))
+      (expect-signals (c error) (await combined :timeout +test-timeout+) (expect (eq c condition) :to-be-truthy))))
 
   (it "unregisters an observer registered on a still-pending input after the outcome is already decided"
     (let* ((already-failed (make-promise))
@@ -310,7 +309,7 @@
       ;; ever registered.
       (deliver-error already-failed condition)
       (let ((combined (promise-all (list already-failed pending))))
-        (expect-signals (c error) (await combined :timeout 1) (expect (eq c condition) :to-be-truthy))
+        (expect-signals (c error) (await combined :timeout +test-timeout+) (expect (eq c condition) :to-be-truthy))
         ;; PENDING's observer was unregistered as soon as it was registered,
         ;; since the outcome was already decided by ALREADY-FAILED --
         ;; delivering it now must not raise or otherwise disturb the
@@ -318,7 +317,7 @@
         (deliver pending :too-late)
         (expect (promise-settled-p combined) :to-be-truthy)))))
 
-(describe "promise-any"
+(describe-concurrent "promise-any"
   (it "signals PROMISE-EMPTY-INPUT for no input promises"
     (signals promise-empty-input (promise-any nil)))
 
@@ -326,7 +325,7 @@
     (let ((promises (list (make-promise) (make-promise))))
       (let ((first-to-win (promise-any promises)))
         (deliver (second promises) :winner)
-        (expect (await first-to-win :timeout 1) :to-be :winner))))
+        (expect (await first-to-win :timeout +test-timeout+) :to-be :winner))))
 
   (it "fails with PROMISE-ALL-FAILED once every input has failed"
     (let* ((first-input (make-promise))
@@ -336,7 +335,7 @@
            (combined (promise-any (list first-input second-input))))
       (deliver-error first-input first-condition)
       (deliver-error second-input second-condition)
-      (expect-signals (condition promise-all-failed) (await combined :timeout 1)
+      (expect-signals (condition promise-all-failed) (await combined :timeout +test-timeout+)
         (expect (promise-all-failed-causes condition)
                 :to-equal (list first-condition second-condition)))))
 
@@ -349,36 +348,36 @@
       ;; ever registered.
       (deliver already-fulfilled :winner)
       (let ((combined (promise-any (list already-fulfilled pending))))
-        (expect (await combined :timeout 1) :to-be :winner)
+        (expect (await combined :timeout +test-timeout+) :to-be :winner)
         ;; PENDING's observer was unregistered as soon as it was registered,
         ;; since the outcome was already decided by ALREADY-FULFILLED --
         ;; delivering it now must not raise or otherwise disturb the result.
         (deliver pending :too-late)
-        (expect (await combined :timeout 1) :to-be :winner)))))
+        (expect (await combined :timeout +test-timeout+) :to-be :winner)))))
 
-(describe "promise-timeout"
+(describe-concurrent "promise-timeout"
   (it "mirrors a promise that settles before the timeout elapses"
     (let ((promise (make-promise)))
       (deliver promise :in-time)
-      (expect (await (promise-timeout promise 1) :timeout 1) :to-be :in-time)))
+      (expect (await (promise-timeout promise +test-timeout+) :timeout +test-timeout+) :to-be :in-time)))
 
   (it "signals OPERATION-TIMED-OUT once the timeout elapses first"
     (let ((promise (make-promise)))
-      (signals operation-timed-out (await (promise-timeout promise 0.01) :timeout 1))))
+      (signals operation-timed-out (await (promise-timeout promise +test-timeout-brief+) :timeout +test-timeout+))))
 
   (it "mirrors a promise that fails before the timeout elapses"
     (let ((promise (make-promise))
           (condition (make-condition 'simple-error :format-control "boom")))
       (deliver-error promise condition)
-      (expect-signals (c error) (await (promise-timeout promise 1) :timeout 1) (expect (eq c condition) :to-be-truthy))))
+      (expect-signals (c error) (await (promise-timeout promise +test-timeout+) :timeout +test-timeout+) (expect (eq c condition) :to-be-truthy))))
 
   (it "does not resettle the timed-out result when the source delivers late"
     (let ((promise (make-promise)))
-      (let ((timed (promise-timeout promise 0.01)))
-        (signals operation-timed-out (await timed :timeout 1))
+      (let ((timed (promise-timeout promise +test-timeout-brief+)))
+        (signals operation-timed-out (await timed :timeout +test-timeout+))
         ;; PROMISE-TIMEOUT's observer already unregistered itself on timeout,
         ;; so delivering PROMISE afterward must not raise anything -- its own
         ;; delivery attempt against the already-settled TIMED is silently
         ;; ignored rather than propagating PROMISE-ALREADY-FULFILLED.
         (deliver promise :too-late)
-        (signals operation-timed-out (await timed :timeout 1))))))
+        (signals operation-timed-out (await timed :timeout +test-timeout+))))))

@@ -143,14 +143,16 @@ own cancellation) already accounts for that -- then remove it from SCOPE."
 
 (defun %scope-await-children (scope &key timeout)
   "Block until every child SPAWNed on SCOPE has finished, or signal
-OPERATION-TIMED-OUT after TIMEOUT seconds -- WITH-TASK-SCOPE's own :TIMEOUT.
-On a timeout, SCOPE's own cancellation (its caller's job, not this
-function's) is what stops the children this stopped waiting for."
-  (%with-scope-lock (scope)
-    (%with-deadline-wait (done (task-scope-condition-variable scope) (task-scope-lock scope)
-                          (%deadline-from-timeout timeout) timeout :with-task-scope)
-        (zerop (hash-table-count (task-scope-children scope)))
-      done)))
+OPERATION-TIMED-OUT after TIMEOUT (a CL-DATE-KIT:DURATION) elapses --
+WITH-TASK-SCOPE's own :TIMEOUT. On a timeout, SCOPE's own cancellation (its
+caller's job, not this function's) is what stops the children this stopped
+waiting for."
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (%with-scope-lock (scope)
+      (%with-deadline-wait (done (task-scope-condition-variable scope) (task-scope-lock scope)
+                            (%deadline-from-timeout timeout) timeout :with-task-scope)
+          (zerop (hash-table-count (task-scope-children scope)))
+        done))))
 
 (defun %scope-await-children-or-cancel (scope timeout)
   "%SCOPE-AWAIT-CHILDREN, taking over the caller's job its own docstring

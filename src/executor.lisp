@@ -5,82 +5,12 @@
 ;;;; instead of PROMISE/FUTURE's one-thread-per-task cost.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
-;;; An unbounded blocking queue for pending tasks. Deliberately not the
-;;; public CHANNEL: CHANNEL's SEND applies backpressure once a bounded buffer
-;;; fills, which SUBMIT should not do, and an unbuffered CHANNEL would make
-;;; SUBMIT block until a worker is free to take it -- also not the contract
-;;; here. Uses a growable ring buffer to avoid per-submission allocation.
-(defstruct (%work-queue (:constructor %make-work-queue (capacity buffer)))
-  "Internal task queue used by EXECUTOR."
-  (lock (make-lock :name "cl-concurrent-kit executor queue") :read-only t)
-  (condition-variable (make-condition-variable :name "cl-concurrent-kit executor queue")
-                       :read-only t)
-  (buffer nil :type (simple-array t (*)))
-  (head 0 :type fixnum)
-  (tail 0 :type fixnum)
-  ;; NIL means unbounded; otherwise submissions fail fast when full.
-  (capacity nil :read-only t :type (or null (integer 1 *)))
-  (count 0 :type (integer 0 #.most-positive-fixnum))
-  (high-water-mark 0 :type (integer 0 #.most-positive-fixnum))
-  (closed-p nil))
-
-(defmacro %with-work-queue-lock ((queue) &body body)
-  "Hold QUEUE's own lock for the dynamic extent of BODY."
-  `(with-lock-held ((%work-queue-lock ,queue)) ,@body))
-
-(progn
-  (defun %work-queue-grow (queue)
-    "Double QUEUE's ring while preserving FIFO order; called under its lock."
-    (let* ((old-buffer (%work-queue-buffer queue))
-           (old-length (length old-buffer))
-           (count (%work-queue-count queue))
-           (new-length (min (or (%work-queue-capacity queue) #.most-positive-fixnum)
-                            (* 2 old-length)))
-           (new-buffer (make-array new-length))
-           (old-index (%work-queue-head queue)))
-      (dotimes (index count)
-        (setf (aref new-buffer index) (aref old-buffer old-index)
-              old-index (if (= old-index (1- old-length)) 0 (1+ old-index))))
-      (setf (%work-queue-buffer queue) new-buffer
-            (%work-queue-head queue) 0
-            (%work-queue-tail queue) count)))
-
-  (defun %work-queue-push (queue task)
-    "Enqueue TASK without per-submission consing."
-    (%with-work-queue-lock (queue)
-      (cond
-        ((%work-queue-closed-p queue) (values nil :closed))
-        ((and (%work-queue-capacity queue)
-              (>= (%work-queue-count queue) (%work-queue-capacity queue)))
-         (values nil :full))
-        (t
-         (when (= (%work-queue-count queue) (length (%work-queue-buffer queue)))
-           (%work-queue-grow queue))
-         (let ((buffer (%work-queue-buffer queue))
-               (tail (%work-queue-tail queue)))
-           (setf (aref buffer tail) task
-                 (%work-queue-tail queue) (if (= tail (1- (length buffer))) 0 (1+ tail))))
-         (let ((count (incf (%work-queue-count queue))))
-           (when (> count (%work-queue-high-water-mark queue))
-             (setf (%work-queue-high-water-mark queue) count)))
-         (condition-notify (%work-queue-condition-variable queue))
-         (values t nil))))))
-
-(defun %work-queue-pop (queue)
-  "Block until a task is available or QUEUE is closed and drained. Returns
-(VALUES TASK T) or (VALUES NIL NIL)."
-  (%with-work-queue-lock (queue)
-    (loop until (or (plusp (%work-queue-count queue)) (%work-queue-closed-p queue))
-          do (condition-wait (%work-queue-condition-variable queue) (%work-queue-lock queue)))
-    (if (zerop (%work-queue-count queue))
-        (values nil nil)
-        (let* ((buffer (%work-queue-buffer queue))
-               (head (%work-queue-head queue))
-               (task (aref buffer head)))
-          (setf (aref buffer head) nil
-                (%work-queue-head queue) (if (= head (1- (length buffer))) 0 (1+ head)))
-          (decf (%work-queue-count queue))
-          (values task t)))))
+(defconstant +executor-default-queue-buffer-size+ 64
+  "Initial ring-buffer length for the task queue of a new EXECUTOR. The queue
+grows by doubling (see %WORK-QUEUE-GROW in src/executor-work-queue.lisp) as
+needed, so this bounds only the
+first allocation; MAKE-EXECUTOR clamps it to :QUEUE-CAPACITY for a bounded
+queue.")
 
 ;;; Executor
 (eval-when (:compile-toplevel :load-toplevel :execute)
@@ -147,36 +77,37 @@ HANDLER-CASE around one) just to find out."
 
 (defun await-executor-termination (executor &key timeout)
   "Block until every one of EXECUTOR's worker threads has exited, or signal
-OPERATION-TIMED-OUT after TIMEOUT seconds. Signals EXECUTOR-SHUT-DOWN instead
-of blocking if called from one of EXECUTOR's own worker threads -- a worker
-cannot wait for its own thread, or a sibling it might itself be blocking, to
-exit.
+OPERATION-TIMED-OUT after TIMEOUT (a CL-DATE-KIT:DURATION) elapses. Signals
+EXECUTOR-SHUT-DOWN instead of blocking if called from one of EXECUTOR's own
+worker threads -- a worker cannot wait for its own thread, or a sibling it
+might itself be blocking, to exit.
 
 This does not request shutdown itself -- call SHUTDOWN-EXECUTOR first (with
 or without :WAIT) if EXECUTOR is still accepting work, or its workers will
 never exit for this to observe."
-  (when (member (current-thread) (executor-threads executor) :test (function eq))
-    (error 'executor-shut-down :executor executor))
-  (let ((deadline (%deadline-from-timeout timeout))
-        (timeout-marker (gensym "JOIN-TIMEOUT-")))
-    (dolist (thread (executor-threads executor))
-      (if deadline
-          (let ((remaining (%seconds-until-deadline deadline)))
-            (let ((result (join-thread thread :default timeout-marker :timeout remaining)))
-              (when (and (eq result timeout-marker) (thread-alive-p thread))
-                (error 'operation-timed-out
-                       :operation :await-executor-termination
-                       :timeout timeout))))
-          (join-thread thread))))
-  (values))
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (when (member (current-thread) (executor-threads executor) :test (function eq))
+      (error 'executor-shut-down :executor executor))
+    (let ((deadline (%deadline-from-timeout timeout))
+          (timeout-marker (gensym "JOIN-TIMEOUT-")))
+      (dolist (thread (executor-threads executor))
+        (if deadline
+            (let ((remaining (%seconds-until-deadline deadline)))
+              (let ((result (join-thread thread :default timeout-marker :timeout remaining)))
+                (when (and (eq result timeout-marker) (thread-alive-p thread))
+                  (error 'operation-timed-out
+                         :operation :await-executor-termination
+                         :timeout timeout))))
+            (join-thread thread))))
+    (values)))
 
 (defun shutdown-executor (executor &key wait cancel-pending timeout)
   "Stop EXECUTOR from accepting new work. With CANCEL-PENDING true, reject
 queued tasks without running them. When WAIT is true, block until every worker
 thread has exited (via AWAIT-EXECUTOR-TERMINATION, whose own :TIMEOUT and
-worker-reentrancy behavior this shares). TIMEOUT bounds that wait in seconds
-and signals OPERATION-TIMED-OUT if any worker remains alive past that
-deadline."
+worker-reentrancy behavior this shares). TIMEOUT (a CL-DATE-KIT:DURATION)
+bounds that wait and signals OPERATION-TIMED-OUT if any worker remains alive
+past that deadline."
   (%work-queue-close executor cancel-pending)
   (when wait
     (await-executor-termination executor :timeout timeout))
@@ -189,8 +120,8 @@ deadline."
 NAME, and QUEUE-CAPACITY -- for the dynamic extent of BODY, then shut it down
 and wait for every worker to exit -- letting any already-queued work finish
 first, exactly like SHUTDOWN-EXECUTOR without :CANCEL-PENDING -- whether BODY
-returns normally or signals. SHUTDOWN-TIMEOUT bounds that final wait in
-seconds, as SHUTDOWN-EXECUTOR's own :TIMEOUT would."
+returns normally or signals. SHUTDOWN-TIMEOUT (a CL-DATE-KIT:DURATION) bounds
+that final wait, as SHUTDOWN-EXECUTOR's own :TIMEOUT would."
   `(let ((,var (make-executor :size ,size :name ,name :queue-capacity ,queue-capacity)))
      (unwind-protect (locally ,@body)
        (shutdown-executor ,var :wait t :timeout ,shutdown-timeout))))
@@ -220,7 +151,11 @@ attempting to cancel calls already running."
                               (declare (ignore state outcome))
                               (signal-semaphore semaphore)))
                   (submit executor thunk)))))
-    (map 'list (function await) promises)))
+    (let ((settlements (await (promise-all-settled promises))))
+      (dolist (settlement settlements)
+        (when (eq :failed (promise-settlement-state settlement))
+          (error (promise-settlement-condition settlement))))
+      (mapcar (function promise-settlement-value) settlements))))
 
 (defun make-executor (&key (size 4) (name "cl-concurrent-kit executor") queue-capacity)
   "Create an executor with SIZE worker threads.
@@ -231,8 +166,8 @@ SUBMIT fail fast with EXECUTOR-QUEUE-FULL when the queue is full."
   (check-type queue-capacity (or null (integer 1 *)))
   (let ((queue (%make-work-queue queue-capacity
                                  (make-array (if queue-capacity
-                                                 (min queue-capacity 64)
-                                                 64))))
+                                                 (min queue-capacity +executor-default-queue-buffer-size+)
+                                                 +executor-default-queue-buffer-size+))))
         (threads nil))
     (handler-case
         (progn

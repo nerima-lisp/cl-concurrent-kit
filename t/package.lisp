@@ -3,8 +3,10 @@
   (:shadowing-import-from #:cl-weave #:describe)
   (:import-from #:cl-weave
    #:it #:expect #:signals #:run-all
+   #:describe-concurrent
    #:it-property #:it-fuzz #:gen-integer #:gen-list #:gen-boolean
-   #:with-continuation-result #:with-soft-assertions)
+   #:with-continuation-result #:with-soft-assertions
+   #:it-each #:around-each #:with-replaced-function)
   (:import-from #:cl-concurrent-kit
    ;; Threads / locks / condition variables / semaphores / atomics
    #:make-thread #:current-thread #:thread-name #:thread-alive-p #:join-thread
@@ -66,6 +68,23 @@
 
 (in-package #:cl-concurrent-kit/test)
 
+(defparameter +test-timeout+ (cl-date-kit:duration-of-seconds 1)
+  "The \"long enough that a correct wait won't hit it\" deadline used by nearly
+every test in this suite that needs some bound to avoid hanging forever on a
+real bug, without ever expecting to actually expire.")
+
+(defparameter +test-timeout-long+ (cl-date-kit:duration-of-seconds 2)
+  "Same role as +TEST-TIMEOUT+, doubled for suites whose own delay budget
+needs more headroom.")
+
+(defparameter +test-timeout-expiry+ (cl-date-kit:duration-of-millis 50)
+  "The \"short enough that a test can deliberately let it expire\" deadline
+used by tests asserting OPERATION-TIMED-OUT actually fires.")
+
+(defparameter +test-timeout-brief+ (cl-date-kit:duration-of-millis 10)
+  "Shorter than +TEST-TIMEOUT-EXPIRY+, for tests racing two expiries against
+each other or wanting the tightest deliberate-expiry margin.")
+
 (defun wait-or-fail (semaphore what)
   "WAIT-ON-SEMAPHORE for up to one second, signalling a plain ERROR naming
 WHAT if it is never signalled -- the \"did the other thread reach its
@@ -109,11 +128,11 @@ tests that must inspect which promise, channel, or executor a condition names."
      (,condition-type (,condition-var)
        ,@checks)))
 
-(defun drain-channel (channel &key (timeout 1))
+(defun drain-channel (channel &key (timeout +test-timeout+))
   "Receive every value from CHANNEL until it closes, returning them as a
-list in receive order. Blocks up to TIMEOUT seconds per RECV -- the common
-\"run a stage to completion and collect its output\" shape nearly every
-stream stage test needs."
+list in receive order. Blocks up to TIMEOUT -- a CL-DATE-KIT:DURATION -- per
+RECV, the common \"run a stage to completion and collect its output\" shape
+nearly every stream stage test needs."
   (loop for value = (recv channel :timeout timeout)
         while value
         collect value))

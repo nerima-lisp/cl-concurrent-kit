@@ -8,7 +8,7 @@
 (in-package #:asdf-user)
 
 (asdf:defsystem "cl-concurrent-kit"
-  :description "Dependency-free, SBCL-only concurrency toolkit built directly on sb-thread"
+  :description "SBCL-only concurrency toolkit built directly on sb-thread, using CL-DATE-KIT durations and CL-BOUNDARY-KIT clock injection for deadline arithmetic"
   :long-description "cl-concurrent-kit wraps sb-thread/sb-ext into the small
 set of primitives a portability layer like bordeaux-threads would offer
 (threads, locks, condition variables, semaphores), then builds the
@@ -16,15 +16,17 @@ higher-level concurrency shapes found in modern languages on top of them:
 promises/futures with explicit continuation-passing composition via
 PROMISE-THEN (JS/Rust), CSP channels with a Go-style SELECT (Go/Kotlin), a
 fixed-size executor (Java), and structured concurrency scopes with cooperative
-cancellation (Kotlin/Swift/Python trio)."
+cancellation (Kotlin/Swift/Python trio). Every :TIMEOUT argument across the
+library accepts a CL-DATE-KIT:DURATION; CL-BOUNDARY-KIT supplies the
+injectable clock behind the deadline arithmetic that measures it."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.5.0"
+  :version "0.6.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")
-  :depends-on ()
+  :depends-on ("cl-boundary-kit" "cl-date-kit")
   :pathname "src"
   :serial t
   ;; SPEED 0 for THIS system's own files and no one else's.
@@ -69,14 +71,18 @@ cancellation (Kotlin/Swift/Python trio)."
    (:file "timeout")
    (:file "promise")
    (:file "promise-combinators")
+   (:file "promise-racing")
    (:file "channel")
+   (:file "channel-waiters")
    (:file "select")
+   (:file "executor-work-queue")
    (:file "executor")
    (:file "scope-state")
    (:file "scope-execution")
    (:file "scope")
    (:file "latch")
    (:file "stream")
+   (:file "stream-terminal")
    (:file "stream-fan-out")
    (:file "stream-fan-in")
    (:file "stream-map-concurrent")
@@ -90,7 +96,7 @@ cancellation (Kotlin/Swift/Python trio)."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.5.0"
+  :version "0.6.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")

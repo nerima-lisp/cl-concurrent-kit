@@ -31,7 +31,7 @@
                        (signal-semaphore ready)
                        (wait-on-semaphore release)
                        (with-lock-held (lock) (push i finished)))))))
-        (expect (await controller :timeout 1) :to-be :released)
+        (expect (await controller :timeout +test-timeout+) :to-be :released)
         (expect (sort finished (function <)) :to-equal (list 0 1 2 3 4)))))
 
   (it "makes each SPAWNed task result available via its returned promise"
@@ -46,7 +46,7 @@
                      (lambda ()
                        (check-cancelled scope)
                        :still-active))))
-        (expect (await promise :timeout 1) :to-be :still-active))))
+        (expect (await promise :timeout +test-timeout+) :to-be :still-active))))
 
   (it "returns a cancelled promise when SPAWN is called after scope closure"
     (let ((closed-scope nil))
@@ -54,7 +54,7 @@
         (setf closed-scope scope))
       (let ((promise (spawn closed-scope (lambda () :should-not-run))))
         (expect (handler-case
-                    (await promise :timeout 1)
+                    (await promise :timeout +test-timeout+)
                   (task-cancelled () :rejected))
                 :to-be :rejected))))
 
@@ -140,14 +140,14 @@
               (setf controller
                     (future
                       (handler-case
-                          (await first :timeout 1)
+                          (await first :timeout +test-timeout+)
                         (error ()
                           (signal-semaphore second-release)
                           :released))))
               (signal-semaphore first-release)))
         (scope-error (condition)
           (setf causes (scope-error-causes condition))))
-      (expect (await controller :timeout 1) :to-be :released)
+      (expect (await controller :timeout +test-timeout+) :to-be :released)
       (expect (mapcar (function simple-condition-format-control) causes)
               :to-equal (list "first failure" "second failure"))))
 
@@ -174,13 +174,13 @@
     (let ((scope (with-task-scope (scope) scope)))
       (let ((promise (spawn scope (lambda () :never-runs))))
         (signals task-cancelled
-          (await promise :timeout 1))))))
+          (await promise :timeout +test-timeout+))))))
 
 (describe "with-task-scope timeout"
   (it "signals OPERATION-TIMED-OUT when a child outlives WITH-TASK-SCOPE's :TIMEOUT"
     (let ((started (make-semaphore)))
       (signals operation-timed-out
-        (with-task-scope (scope :timeout 0.05d0)
+        (with-task-scope (scope :timeout +test-timeout-expiry+)
           (spawn scope
                  (lambda ()
                    (signal-semaphore started)
@@ -188,7 +188,7 @@
           (wait-or-fail started "scope child did not start")))))
 
   (it "does not signal OPERATION-TIMED-OUT when every child finishes within :TIMEOUT"
-    (expect (with-task-scope (scope :timeout 1)
+    (expect (with-task-scope (scope :timeout +test-timeout+)
               (await (spawn scope (lambda () :fast))))
             :to-be :fast))
 
@@ -199,7 +199,7 @@
       (unwind-protect
           (progn
             (signals operation-timed-out
-              (with-task-scope (scope :timeout 0.01)
+              (with-task-scope (scope :timeout +test-timeout-brief+)
                 (spawn
                   scope
                   (lambda ()
@@ -233,14 +233,14 @@
             (await (spawn scope
                           (lambda () :never-runs)
                           :executor executor)
-                   :timeout 1))))))
+                   :timeout +test-timeout+))))))
 
   (it "runs a child on an executor and preserves its result"
     (let ((executor (make-executor :size 1)))
       (unwind-protect
           (with-task-scope (scope)
             (expect (await (spawn scope (lambda () 42) :executor executor)
-                           :timeout 1)
+                           :timeout +test-timeout+)
                     :to-be 42))
         (shutdown-executor executor :wait t))))
 
@@ -254,7 +254,7 @@
     (let ((executor (make-executor :size 1)))
       (unwind-protect
           (expect (with-task-scope (scope)
-                    (await (spawn scope (lambda () (+ 20 22)) :executor executor) :timeout 1))
+                    (await (spawn scope (lambda () (+ 20 22)) :executor executor) :timeout +test-timeout+))
                   :to-be 42)
         (shutdown-executor executor :wait t))))
 
@@ -281,7 +281,7 @@
                         (scope-error () :scope-failed)))))
               (wait-or-fail queued "scope child was not queued")
               (shutdown-executor executor :cancel-pending t)
-              (expect (await scope-result :timeout 1) :to-be :scope-failed)
+              (expect (await scope-result :timeout +test-timeout+) :to-be :scope-failed)
               (expect ran-p :to-be nil)))
         (when release (signal-semaphore release))
         (shutdown-executor executor :wait t))))
@@ -335,29 +335,23 @@
         scope child (lambda () (setf cancelled t)))
       (expect cancelled :to-be-truthy)))
   (it "removes the child registration when direct thread creation fails"
-    (let ((scope (cl-concurrent-kit::%make-task-scope))
-          (original-make-thread
-            (symbol-function 'cl-concurrent-kit:make-thread)))
-      (unwind-protect
-          (progn
-            (setf (symbol-function 'cl-concurrent-kit:make-thread)
-                  (lambda (&rest arguments)
-                    (declare (ignore arguments))
-                    (error "thread creation failed")))
-            (signals simple-error
-              (spawn scope (lambda () :never-runs)))
-            (expect
-              (hash-table-count
-                (cl-concurrent-kit::task-scope-children scope))
-              :to-be
-              0))
-        (setf (symbol-function 'cl-concurrent-kit:make-thread)
-              original-make-thread)))))
+    (let ((scope (cl-concurrent-kit::%make-task-scope)))
+      (with-replaced-function (cl-concurrent-kit:make-thread
+           (lambda (&rest arguments)
+             (declare (ignore arguments))
+             (error "thread creation failed")))
+        (signals simple-error
+          (spawn scope (lambda () :never-runs)))
+        (expect
+          (hash-table-count
+            (cl-concurrent-kit::task-scope-children scope))
+          :to-be
+          0)))))
 
 (describe "scope active child tracking"
   (it "removes a child after it settles"
     (let ((scope (cl-concurrent-kit::%make-task-scope)))
-      (await (spawn scope (lambda () :done)) :timeout 1)
+      (await (spawn scope (lambda () :done)) :timeout +test-timeout+)
       (expect (hash-table-count
                (cl-concurrent-kit::task-scope-children scope))
               :to-be 0)))

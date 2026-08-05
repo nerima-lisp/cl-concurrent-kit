@@ -19,6 +19,40 @@ hold pending, would only leave the extras permanently queued behind it."
            (or (executor-queue-capacity executor) parallelism))
       parallelism))
 
+(defmacro %bootstrap-channel-workers (&key completions worker limit scope executor
+                                        jobs results output return-from)
+  "Start LIMIT copies of WORKER via %START-CHANNEL-STAGE and store their
+promises in COMPLETIONS, the pool bootstrap CHANNEL-MAP-CONCURRENT and
+CHANNEL-MAP-UNORDERED share.
+
+All workers are registered synchronously, since WITH-TASK-SCOPE may close as
+soon as the caller returns. Should any of them have already failed by the
+time the last one is registered -- an EXECUTOR refusing the task, or a SCOPE
+already cancelled -- JOBS, RESULTS, and OUTPUT are closed and the caller is
+left via (RETURN-FROM RETURN-FROM (VALUES OUTPUT <failed promise>)), so a
+caller that never runs a single job still receives the same two values as one
+that does. RETURN-FROM names the enclosing function because that non-local
+exit belongs to the caller, not to this macro."
+  (let ((completion (gensym "COMPLETION"))
+        (condition (gensym "CONDITION"))
+        (output-value (gensym "OUTPUT"))
+        (worker-completion (gensym "WORKER-COMPLETION")))
+    `(progn
+       (setf ,completions
+             (loop repeat ,limit
+                   collect (%start-channel-stage ,worker :scope ,scope :executor ,executor)))
+       (dolist (,worker-completion ,completions)
+         (when (promise-settled-p ,worker-completion)
+           (handler-case (await ,worker-completion)
+             (error (,condition)
+               (close-channel ,jobs)
+               (close-channel ,results)
+               (let ((,output-value ,output))
+                 (close-channel ,output-value)
+                 (let ((,completion (make-promise)))
+                   (deliver-error ,completion ,condition)
+                   (return-from ,return-from (values ,output-value ,completion)))))))))))
+
 (defun channel-map-concurrent (parallelism function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to INPUT concurrently across up to PARALLELISM workers,
 preserving input order in the output.
@@ -51,19 +85,10 @@ its own dispatcher."
                        (return-from worker nil))))))))
       ;; Register all workers synchronously: WITH-TASK-SCOPE may close as
       ;; soon as this call returns.
-      (setf worker-completions
-            (loop repeat worker-limit
-                  collect (%start-channel-stage (function worker) :scope scope :executor executor)))
-      (dolist (worker-completion worker-completions)
-        (when (promise-settled-p worker-completion)
-          (handler-case (await worker-completion)
-            (error (condition)
-              (close-channel jobs)
-              (close-channel results)
-              (close-channel output)
-              (let ((completion (make-promise)))
-                (deliver-error completion condition)
-                (return-from channel-map-concurrent (values output completion)))))))
+      (%bootstrap-channel-workers :completions worker-completions :worker (function worker)
+                                  :limit worker-limit :scope scope :executor executor
+                                  :jobs jobs :results results :output output
+                                  :return-from channel-map-concurrent)
       (values
        output
        (%with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
@@ -110,9 +135,7 @@ its own dispatcher."
                (close-channel jobs)))
            ;; A caller without a SCOPE still receives a completion promise
            ;; that settles only once every worker has actually exited.
-           (unless scope
-             (dolist (worker-completion worker-completions)
-               (await worker-completion)))))))))
+           (unless scope (await (promise-all worker-completions)))))))))
 
 (defun channel-map-unordered (parallelism function input &key (buffer-size 0) scope executor)
   "Apply FUNCTION to INPUT concurrently across up to PARALLELISM workers,
@@ -137,19 +160,10 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
                    (error (condition)
                      (send results (list :error condition))
                      (return-from worker nil)))))))
-      (setf worker-completions
-            (loop repeat worker-limit
-                  collect (%start-channel-stage (function worker) :scope scope :executor executor)))
-      (dolist (worker-completion worker-completions)
-        (when (promise-settled-p worker-completion)
-          (handler-case (await worker-completion)
-            (error (condition)
-              (close-channel jobs)
-              (close-channel results)
-              (close-channel output)
-              (let ((completion (make-promise)))
-                (deliver-error completion condition)
-                (return-from channel-map-unordered (values output completion)))))))
+      (%bootstrap-channel-workers :completions worker-completions :worker (function worker)
+                                  :limit worker-limit :scope scope :executor executor
+                                  :jobs jobs :results results :output output
+                                  :return-from channel-map-unordered)
       (values
        output
        (%with-channel-stage (:scope scope :executor nil :outputs (list jobs results output))
@@ -178,8 +192,6 @@ EXECUTOR, are the same as CHANNEL-MAP-CONCURRENT."
                      ((< completed submitted) (collect-one-result))
                      (input-closed-p (return))))
                (close-channel jobs)))
-           (unless scope
-             (dolist (worker-completion worker-completions)
-               (await worker-completion)))))))))
+           (unless scope (await (promise-all worker-completions)))))))))
 
 (declaim (optimize (speed 0) (safety 1) (space 1) (debug 1) (compilation-speed 1)))

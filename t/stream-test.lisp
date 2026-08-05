@@ -8,49 +8,49 @@
           (funcall emit 1)
           (funcall emit 2)
           (funcall emit 3))
-      (expect (drain-channel output :timeout 1)
+      (expect (drain-channel output :timeout +test-timeout+)
               :to-equal (list 1 2 3))
-      (await completion :timeout 1))))
+      (await completion :timeout +test-timeout+))))
 
 (describe "channel-from-sequence"
   (it "emits a snapshot of SEQUENCE in order, then closes"
     (let ((source (list 1 2 3)))
       (multiple-value-bind (output completion) (channel-from-sequence source)
         (setf (first source) :mutated-after-the-fact)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 2 3))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-map"
   (it "applies FUNCTION to every value and closes the output once INPUT closes"
     (let ((input (make-channel :buffer-size 3)))
       (send input 1) (send input 2) (send input 3) (close-channel input)
       (multiple-value-bind (output completion) (channel-map (lambda (x) (* x x)) input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 4 9))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "fails the completion promise when FUNCTION signals"
     (let ((input (make-channel :buffer-size 1)))
       (send input 1)
       (multiple-value-bind (output completion) (channel-map (lambda (x) (declare (ignore x)) (error "boom")) input)
         (declare (ignore output))
-        (signals error (await completion :timeout 1)))))
+        (signals error (await completion :timeout +test-timeout+)))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
       (send input 1) (send input 2) (send input 3) (close-channel input)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-map (lambda (x) (* x x)) input :scope scope)
-          (expect (drain-channel output :timeout 1)
+          (expect (drain-channel output :timeout +test-timeout+)
                   :to-equal (list 1 4 9))
-          (await completion :timeout 1)))))
+          (await completion :timeout +test-timeout+)))))
 
   (it "fails the completion promise synchronously when starting the stage itself fails"
     (let ((input (make-channel)))
       (multiple-value-bind (output completion)
           (channel-map (function identity) input :executor :not-an-executor)
-        (signals error (await completion :timeout 1))
+        (signals error (await completion :timeout +test-timeout+))
         (expect (channel-closed-p output) :to-be-truthy)))))
 
 (describe "channel-keep"
@@ -59,9 +59,9 @@
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-keep (lambda (x) (and (evenp x) (* x 10))) input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 20 40))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-filter"
   (it "forwards only values PREDICATE accepts"
@@ -69,9 +69,9 @@
       (dolist (x (list 1 2 3 4)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-filter (function evenp) input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 2 4))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-distinct-until-changed"
   (it "drops consecutive duplicates under the default TEST/KEY"
@@ -79,9 +79,9 @@
       (dolist (x (list 1 1 2 2 2 3)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-distinct-until-changed input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 2 3))
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "compares by KEY under TEST"
     (let ((input (make-channel :buffer-size 3)))
@@ -89,18 +89,18 @@
       (close-channel input)
       (multiple-value-bind (output completion)
           (channel-distinct-until-changed input :key (function second) :test (function eql))
-        (expect (mapcar (function first) (drain-channel output :timeout 1))
+        (expect (mapcar (function first) (drain-channel output :timeout +test-timeout+))
                 :to-equal (list :a :c))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-flat-map"
   (it "forwards every value of each returned sequence, in order"
     (let ((input (make-channel :buffer-size 2)))
       (send input 1) (send input 2) (close-channel input)
       (multiple-value-bind (output completion) (channel-flat-map (lambda (x) (list x (* x 10))) input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 10 2 20))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-scan"
   (it "emits each successive accumulator, not the initial value"
@@ -108,42 +108,42 @@
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
       (multiple-value-bind (output completion) (channel-scan (function +) 0 input)
-        (expect (drain-channel output :timeout 1)
+        (expect (drain-channel output :timeout +test-timeout+)
                 :to-equal (list 1 3 6))
-        (await completion :timeout 1)))))
+        (await completion :timeout +test-timeout+)))))
 
 (describe "channel-reduce"
   (it "resolves to the final accumulator once INPUT closes"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
-      (expect (await (channel-reduce (function +) 0 input) :timeout 1) :to-be 6)))
+      (expect (await (channel-reduce (function +) 0 input) :timeout +test-timeout+) :to-be 6)))
 
   (it "resolves to INITIAL-VALUE for an empty, already-closed INPUT"
     (let ((input (make-channel)))
       (close-channel input)
-      (expect (await (channel-reduce (function +) 42 input) :timeout 1) :to-be 42)))
+      (expect (await (channel-reduce (function +) 42 input) :timeout +test-timeout+) :to-be 42)))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (expect (await (channel-reduce (function +) 0 input :scope scope) :timeout 1) :to-be 6)))))
+        (expect (await (channel-reduce (function +) 0 input :scope scope) :timeout +test-timeout+) :to-be 6)))))
 
 (describe "channel-collect"
   (it "resolves to every value in input order"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list :a :b :c)) (send input x))
       (close-channel input)
-      (expect (await (channel-collect input) :timeout 1) :to-equal (list :a :b :c))))
+      (expect (await (channel-collect input) :timeout +test-timeout+) :to-equal (list :a :b :c))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list :a :b :c)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (expect (await (channel-collect input :scope scope) :timeout 1) :to-equal (list :a :b :c))))))
+        (expect (await (channel-collect input :scope scope) :timeout +test-timeout+) :to-equal (list :a :b :c))))))
 
 (describe "channel-each"
   (it "runs FUNCTION on every value in order and resolves to NIL"
@@ -151,7 +151,7 @@
           (seen (list)))
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
-      (expect (await (channel-each (lambda (x) (push x seen)) input) :timeout 1) :to-be nil)
+      (expect (await (channel-each (lambda (x) (push x seen)) input) :timeout +test-timeout+) :to-be nil)
       (expect (nreverse seen) :to-equal (list 1 2 3))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
@@ -160,7 +160,7 @@
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (await (channel-each (lambda (x) (push x seen)) input :scope scope) :timeout 1))
+        (await (channel-each (lambda (x) (push x seen)) input :scope scope) :timeout +test-timeout+))
       (expect (nreverse seen) :to-equal (list 1 2 3)))))
 
 (describe "channel-some"
@@ -168,60 +168,60 @@
     (let ((input (make-channel :buffer-size 4)))
       (dolist (x (list 1 3 4 5)) (send input x))
       (close-channel input)
-      (expect (await (channel-some (function evenp) input) :timeout 1) :to-be-truthy)))
+      (expect (await (channel-some (function evenp) input) :timeout +test-timeout+) :to-be-truthy)))
 
   (it "resolves to NIL once INPUT closes without a match"
     (let ((input (make-channel :buffer-size 2)))
       (dolist (x (list 1 3)) (send input x))
       (close-channel input)
-      (expect (await (channel-some (function evenp) input) :timeout 1) :to-be nil)))
+      (expect (await (channel-some (function evenp) input) :timeout +test-timeout+) :to-be nil)))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 4)))
       (dolist (x (list 1 3 4 5)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (expect (await (channel-some (function evenp) input :scope scope) :timeout 1) :to-be-truthy)))))
+        (expect (await (channel-some (function evenp) input :scope scope) :timeout +test-timeout+) :to-be-truthy)))))
 
 (describe "channel-every"
   (it "resolves to T when every value satisfies PREDICATE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 2 4 6)) (send input x))
       (close-channel input)
-      (expect (await (channel-every (function evenp) input) :timeout 1) :to-be-truthy)))
+      (expect (await (channel-every (function evenp) input) :timeout +test-timeout+) :to-be-truthy)))
 
   (it "resolves to NIL at the first value that fails PREDICATE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 2 3 4)) (send input x))
       (close-channel input)
-      (expect (await (channel-every (function evenp) input) :timeout 1) :to-be nil)))
+      (expect (await (channel-every (function evenp) input) :timeout +test-timeout+) :to-be nil)))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 2 4 6)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (expect (await (channel-every (function evenp) input :scope scope) :timeout 1) :to-be-truthy)))))
+        (expect (await (channel-every (function evenp) input :scope scope) :timeout +test-timeout+) :to-be-truthy)))))
 
 (describe "channel-find"
   (it "resolves to the first matching value"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
-      (expect (await (channel-find (function evenp) input) :timeout 1) :to-be 2)))
+      (expect (await (channel-find (function evenp) input) :timeout +test-timeout+) :to-be 2)))
 
   (it "resolves to NIL once INPUT closes without a match"
     (let ((input (make-channel :buffer-size 2)))
       (dolist (x (list 1 3)) (send input x))
       (close-channel input)
-      (expect (await (channel-find (function evenp) input) :timeout 1) :to-be nil)))
+      (expect (await (channel-find (function evenp) input) :timeout +test-timeout+) :to-be nil)))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 3)))
       (dolist (x (list 1 2 3)) (send input x))
       (close-channel input)
       (with-task-scope (scope)
-        (expect (await (channel-find (function evenp) input :scope scope) :timeout 1) :to-be 2)))))
+        (expect (await (channel-find (function evenp) input :scope scope) :timeout +test-timeout+) :to-be 2)))))
 
 (describe "channel-throttle"
   (it "emits the first value in a window immediately and drops the rest until it elapses"
@@ -229,12 +229,12 @@
       (send input :first)
       (send input :dropped)
       (multiple-value-bind (output completion) (channel-throttle 0.2 input)
-        (expect (recv output :timeout 1) :to-be :first)
+        (expect (recv output :timeout +test-timeout+) :to-be :first)
         (sleep 0.25)
         (send input :second)
         (close-channel input)
-        (expect (recv output :timeout 1) :to-be :second)
-        (await completion :timeout 1))))
+        (expect (recv output :timeout +test-timeout+) :to-be :second)
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 1)))
@@ -242,8 +242,8 @@
       (close-channel input)
       (with-task-scope (scope)
         (multiple-value-bind (output completion) (channel-throttle 0.01 input :scope scope)
-          (expect (recv output :timeout 1) :to-be :only)
-          (await completion :timeout 1))))))
+          (expect (recv output :timeout +test-timeout+) :to-be :only)
+          (await completion :timeout +test-timeout+))))))
 
 (describe "channel-debounce"
   (it "emits only the latest value once INTERVAL passes with nothing newer"
@@ -252,17 +252,17 @@
         (send input 1)
         (send input 2)
         (send input 3)
-        (expect (recv output :timeout 1) :to-be 3)
+        (expect (recv output :timeout +test-timeout+) :to-be 3)
         (close-channel input)
-        (await completion :timeout 1))))
+        (await completion :timeout +test-timeout+))))
 
   (it "flushes a still-pending value once INPUT closes"
     (let ((input (make-channel :buffer-size 1)))
       (multiple-value-bind (output completion) (channel-debounce 5 input)
         (send input :only)
         (close-channel input)
-        (expect (recv output :timeout 1) :to-be :only)
-        (await completion :timeout 1))))
+        (expect (recv output :timeout +test-timeout+) :to-be :only)
+        (await completion :timeout +test-timeout+))))
 
   (it "runs to completion with a live, uncancelled SCOPE"
     (let ((input (make-channel :buffer-size 1)))
@@ -270,8 +270,8 @@
         (multiple-value-bind (output completion) (channel-debounce 0.05 input :scope scope)
           (send input :only)
           (close-channel input)
-          (expect (recv output :timeout 1) :to-be :only)
-          (await completion :timeout 1))))))
+          (expect (recv output :timeout +test-timeout+) :to-be :only)
+          (await completion :timeout +test-timeout+))))))
 
 (describe "stream stage cancellation"
   (it "closes the output channel via its SCOPE waker when cancelled before ever running"
@@ -289,6 +289,6 @@
               (multiple-value-bind (output completion)
                   (channel-map (function identity) input :scope scope :executor executor)
                 (declare (ignore completion))
-                (expect (nth-value 1 (recv output :timeout 1)) :to-be nil))))
+                (expect (nth-value 1 (recv output :timeout +test-timeout+)) :to-be nil))))
         (when release (signal-semaphore release))
-        (shutdown-executor executor :wait t :timeout 1)))))
+        (shutdown-executor executor :wait t :timeout +test-timeout+)))))

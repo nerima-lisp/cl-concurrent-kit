@@ -153,28 +153,30 @@ than an error."
 (defun await (promise &key timeout)
   "Block until PROMISE is settled, then return the value DELIVER was called
 with, or re-signal the condition DELIVER-ERROR was called with. With TIMEOUT
-(seconds), signals OPERATION-TIMED-OUT if PROMISE is not settled in time."
-  (with-lock-held
-    ((promise-lock promise))
-    ;; Settled promises are common in continuation and executor paths. Avoid
-    ;; preparing a deadline or entering the condition-variable loop for them.
-    (let ((state (promise-state promise)))
-      (unless (eq state :pending)
-        (return-from await
-          (ecase state
-            (:fulfilled (promise-value promise))
-            (:failed (error (promise-failure promise)))))))
-    (let ((result
-            (%wait-until
-              ((promise-condition-variable promise)
-               (promise-lock promise)
-               (%deadline-from-timeout timeout))
-              (not (eq (promise-state promise) :pending)))))
-      (when (eq result :timeout)
-        (error 'operation-timed-out :operation :await :timeout timeout))
-      (ecase (promise-state promise)
-        (:fulfilled (promise-value promise))
-        (:failed (error (promise-failure promise)))))))
+(a CL-DATE-KIT:DURATION), signals OPERATION-TIMED-OUT if PROMISE is not
+settled in time."
+  (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
+    (with-lock-held
+      ((promise-lock promise))
+      ;; Settled promises are common in continuation and executor paths. Avoid
+      ;; preparing a deadline or entering the condition-variable loop for them.
+      (let ((state (promise-state promise)))
+        (unless (eq state :pending)
+          (return-from await
+            (ecase state
+              (:fulfilled (promise-value promise))
+              (:failed (error (promise-failure promise)))))))
+      (let ((result
+              (%wait-until
+                ((promise-condition-variable promise)
+                 (promise-lock promise)
+                 (%deadline-from-timeout timeout))
+                (not (eq (promise-state promise) :pending)))))
+        (when (eq result :timeout)
+          (error 'operation-timed-out :operation :await :timeout timeout))
+        (ecase (promise-state promise)
+          (:fulfilled (promise-value promise))
+          (:failed (error (promise-failure promise))))))))
 
 (defmacro future (&body body)
   "Run BODY on a new thread and return a PROMISE for its outcome immediately.

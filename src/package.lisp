@@ -42,6 +42,9 @@
    ;; Preemptive deadlines
    #:with-timeout
 
+   ;; Deadline clock, rebound to a CL-BOUNDARY-KIT:FAKE-CLOCK in tests
+   #:*clock*
+
    ;; Promises / futures
    #:make-promise
    #:promise-p

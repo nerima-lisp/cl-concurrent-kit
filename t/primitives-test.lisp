@@ -1,7 +1,7 @@
 ;;;; t/primitives-test.lisp
 (in-package #:cl-concurrent-kit/test)
 
-(describe
+(describe-concurrent
   "threads"
   (it
     "runs its function on another thread and JOIN-THREAD returns its value"
@@ -50,7 +50,7 @@
       (expect (thread-name observed-thread) :to-equal "cl-concurrent-kit primitives test thread")
       (expect observed-name :to-equal "cl-concurrent-kit primitives test thread"))))
 
-(describe
+(describe-concurrent
   "locks"
   (it
     "serializes access so concurrent increments are not lost"
@@ -65,7 +65,7 @@
         (mapc #'join-thread threads))
       (expect counter :to-be 8000))))
 
-(describe "the LOCK type"
+(describe-concurrent "the LOCK type"
   (it "is the type MAKE-LOCK returns"
     (expect (typep (make-lock) 'lock) :to-be-truthy))
 
@@ -85,7 +85,7 @@
       (expect (typep nil slot-type) :to-be-truthy)
       (expect (typep :not-a-lock slot-type) :to-be nil))))
 
-(describe
+(describe-concurrent
   "condition variables"
   (it
     "wakes a waiter via CONDITION-NOTIFY once the predicate holds"
@@ -113,7 +113,7 @@
         (lock)
         (expect (condition-wait cv lock :timeout 0.05d0) :to-be nil)))))
 
-(describe
+(describe-concurrent
   "semaphores"
   (it
     "blocks in WAIT-ON-SEMAPHORE until SIGNAL-SEMAPHORE"
@@ -130,7 +130,7 @@
     (let ((semaphore (make-semaphore)))
       (expect (wait-on-semaphore semaphore :timeout 0.05d0) :to-be nil))))
 
-(describe
+(describe-concurrent
   "atomic counters"
   (it
     "starts at the given initial value"
@@ -155,7 +155,7 @@
         (mapc #'join-thread down-threads))
       (expect (atomic-counter-value counter) :to-be 0))))
 
-(describe
+(describe-concurrent
   "additional primitive behavior"
   (it
     "accepts the supplied JOIN-THREAD default for a normally completed thread"

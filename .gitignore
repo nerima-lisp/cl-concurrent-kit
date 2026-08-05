@@ -53,3 +53,4 @@ coverage.dat
 
 # --- Repository-specific entries below this line ---
 .worktrees/
+/.paredit/
