@@ -20,22 +20,25 @@ the variable reached by the time a worker thread got around to running it.
 
 ## Bounded blocking operations
 
-`AWAIT`, `SEND`, and `RECV` take `:TIMEOUT` and signal
-`OPERATION-TIMED-OUT` rather than waiting indefinitely. `SELECT` instead
-uses its `(:timeout seconds () body...)` clause to run a fallback expression.
-For lifecycle waits, pass `:TIMEOUT` with `:WAIT T` to
+`AWAIT`, `SEND`, and `RECV` take `:TIMEOUT` -- a `cl-date-kit:duration` --
+and signal `OPERATION-TIMED-OUT` rather than waiting indefinitely. `SELECT`
+instead uses its `(:timeout duration () body...)` clause to run a fallback
+expression. For lifecycle waits, pass `:TIMEOUT` with `:WAIT T` to
 `SHUTDOWN-EXECUTOR`, or to `WITH-TASK-SCOPE` to bound child cleanup:
 
 ```lisp
-(handler-case (cl-concurrent-kit:await promise :timeout 5)
+(handler-case (cl-concurrent-kit:await promise
+                                       :timeout (cl-date-kit:duration-of-seconds 5))
   (cl-concurrent-kit:operation-timed-out ()
     :gave-up))
 ```
 
 ```lisp
-(cl-concurrent-kit:shutdown-executor executor :wait t :timeout 5)
+(cl-concurrent-kit:shutdown-executor executor
+                                     :wait t
+                                     :timeout (cl-date-kit:duration-of-seconds 5))
 
-(cl-concurrent-kit:with-task-scope (scope :timeout 5)
+(cl-concurrent-kit:with-task-scope (scope :timeout (cl-date-kit:duration-of-seconds 5))
   (cl-concurrent-kit:spawn scope #'run-job))
 ```
 
@@ -45,7 +48,7 @@ For lifecycle waits, pass `:TIMEOUT` with `:WAIT T` to
 (cl-concurrent-kit:select
   ((recv fast-channel) (value) (list :fast value))
   ((recv slow-channel) (value) (list :slow value))
-  (:timeout 2 () :neither-arrived))
+  (:timeout (cl-date-kit:duration-of-seconds 2) () :neither-arrived))
 ```
 
 ## A pipeline stage
@@ -110,13 +113,13 @@ parse failure is logged and turned into `NIL` rather than re-signaled to
 
 ## Bounding how long a scope waits for stragglers
 
-`WITH-TASK-SCOPE`'s `:TIMEOUT` bounds only the cleanup wait -- the time
-between the body finishing (normally or by error) and every spawned child
-actually having stopped -- not the body itself:
+`WITH-TASK-SCOPE`'s `:TIMEOUT` -- a `cl-date-kit:duration` -- bounds only the
+cleanup wait -- the time between the body finishing (normally or by error)
+and every spawned child actually having stopped -- not the body itself:
 
 ```lisp
 (handler-case
-    (cl-concurrent-kit:with-task-scope (scope :timeout 5)
+    (cl-concurrent-kit:with-task-scope (scope :timeout (cl-date-kit:duration-of-seconds 5))
       (cl-concurrent-kit:spawn scope #'slow-cleanup-task))
   (cl-concurrent-kit:operation-timed-out ()
     (log-warning "a scope child did not honor cancellation within 5s")))

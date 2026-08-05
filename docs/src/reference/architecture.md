@@ -10,45 +10,56 @@ follows that precedent instead of reintroducing the portability layer it
 would otherwise have depended on -- see `src/primitives.lisp` for the thin
 wrapper this produces.
 
-## Dependencies: SBCL and sb-thread only, nothing else at runtime
+## Dependencies: SBCL/sb-thread, plus CL-BOUNDARY-KIT and CL-DATE-KIT for deadlines
 
 The same [coding standard](https://github.com/nerima-lisp/.github/blob/main/CODING_STANDARD.md)
-that settles SBCL-vs-portability-layer above settles this too: prefer what
-SBCL already ships over adding a dependency for it, org-wide. This project's
-own `.asd` `:description` states the consequence directly -- "Dependency-free,
-SBCL-only" -- and `:depends-on ()` on `cl-concurrent-kit` itself (as opposed
-to `cl-concurrent-kit/test`, which depends on `cl-weave`) is that sentence
-enforced, not just claimed. Three nerima-lisp packages are already used
-elsewhere in this repository, deliberately kept out of that runtime
-dependency list: `cl-weave` for the test suite (`cl-concurrent-kit/test`'s
-own `:depends-on`, never `cl-concurrent-kit`'s), `cl-cli` for
-`benchmarks/run-benchmarks.lisp`'s argument parsing (reached only through
-`flake.nix`'s `CL_SOURCE_REGISTRY` for that one script, the same way
-`cl-weave` is), and `cl-nix-forge` for `flake.nix`'s own packaging --
-none reachable from a consumer that only loads the library. Adding a
-further nerima-lisp package as a *runtime* dependency -- `cl-log-kit`, say,
-for the one `(format *error-output* ...)` call in `src/executor.lisp`'s
-worker loop -- would contradict that `:description` outright for a single
-call site, the textbook shape of the adapter this project's own
-instructions ask not to build. Benchmark tooling and the test suite face no
-such objection: neither ships to, nor is reachable from, a consumer that
-only depends on `cl-concurrent-kit` itself.
+that settles SBCL-vs-portability-layer above settles the *threading* layer
+too: prefer what SBCL already ships over adding a dependency for it,
+org-wide. `src/primitives.lisp` is still a thin wrapper directly over
+`sb-thread`, nothing more. Deadline arithmetic is a deliberate exception,
+adopted once a real gap was found rather than assumed: every public
+`:TIMEOUT` argument in this library (`AWAIT`, `RECV`, `SEND`, `SELECT`'s
+`:TIMEOUT` clause, `AWAIT-LATCH`, `AWAIT-BARRIER`,
+`AWAIT-EXECUTOR-TERMINATION`, `SHUTDOWN-EXECUTOR`, `WITH-EXECUTOR`,
+`WITH-TASK-SCOPE`, `PROMISE-TIMEOUT`, `WITH-TIMEOUT`) accepts a
+`CL-DATE-KIT:DURATION` -- never a raw seconds number -- and the clock behind
+`src/primitives.lisp`'s `%DEADLINE-FROM-TIMEOUT`/`%SECONDS-UNTIL-DEADLINE`
+is `CL-BOUNDARY-KIT:CLOCK-MONOTONIC` on the `*CLOCK*` special variable, not
+a direct `GET-INTERNAL-REAL-TIME` call. Both are consumed exactly as the
+project's own convention asks -- no wrapper type, no re-exported
+constructor, no adapter layer around either library's own API -- a caller
+builds a `CL-DATE-KIT:DURATION` with `CL-DATE-KIT:DURATION-OF-SECONDS` (or
+`-MILLIS`/`-MICROS`/`-NANOS`) directly, and a test rebinds `*CLOCK*` to
+`(CL-BOUNDARY-KIT:MAKE-FAKE-CLOCK)` directly, with nothing of this
+project's own in between. `cl-concurrent-kit.asd`'s `:depends-on` on the
+main system names both by name; `cl-concurrent-kit/test` depends on them
+only transitively, through `cl-concurrent-kit` itself. This is a deliberate
+break from every earlier release's "dependency-free" description, not an
+accidental one -- see the "No backward-compatibility surface" section
+below for why a clean break, not a dual raw-number/Duration API, was the
+only option once the project's own no-compat-shim rule applied here too.
+
+`cl-weave` (the test suite, `cl-concurrent-kit/test`'s own `:depends-on`),
+`cl-cli` (`benchmarks/run-benchmarks.lisp`'s argument parsing, reached only
+through `flake.nix`'s `CL_SOURCE_REGISTRY` for that one script), and
+`cl-nix-forge` (`flake.nix`'s own packaging) remain outside the *main*
+system's dependency list -- none reachable from a consumer that only loads
+the library for its concurrency primitives, same reasoning as before.
 
 The rest of the org's catalog (checked against
 [github.com/orgs/nerima-lisp/repositories](https://github.com/orgs/nerima-lisp/repositories)
-via `gh api orgs/nerima-lisp/repos`, re-fetched live as of v0.4.0 rather than
-carried forward from an earlier pass) fares no better against that same
-test: `cl-json-kit`, `cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`,
-`cl-date-kit`, `cl-tty-kit`, and `cl-host-kit` all answer a data-format,
-text, or host-environment need this package -- concurrency primitives over
-`sb-thread` alone -- has no call site for at all; adopting one would be a
-dependency in search of a use, not a use in search of a dependency.
-`cl-boundary-kit` and `cl-dataflow` are the closest in *spirit* (explicit
-boundary/effect abstractions, composable computation graphs) but overlap
-this project's own domain closely enough that depending on either would
-mean wrapping their abstractions around this package's -- the adapter this
-architecture deliberately avoids -- rather than composing with them as a
-consumer. `cl-cc`, `nshell`, `loom`, `cl-tmux`, and the `cl-cc-*`
+via `gh api orgs/nerima-lisp/repos`, re-surveyed as of the CL-DATE-KIT/
+CL-BOUNDARY-KIT adoption) still fares no better against the "real call
+site, not a dependency in search of a use" test: `cl-json-kit`,
+`cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`, and `cl-tty-kit` all answer
+a data-format, text, or host-environment need this package -- concurrency
+primitives plus deadline arithmetic -- has no call site for at all.
+`cl-dataflow` is the closest remaining *spirit* match (composable
+computation graphs) but overlaps this project's own domain closely enough
+that depending on it would mean wrapping its abstractions around this
+package's -- the adapter this architecture still avoids -- rather than
+consuming a narrow, orthogonal concern the way `CLOCK`/`DURATION` are
+consumed above. `cl-cc`, `nshell`, `loom`, `cl-tmux`, and the `cl-cc-*`
 compiler-internals repositories are a different domain (a self-hosting
 compiler, a shell, a terminal multiplexer, a terminal editor) with no
 natural connection to this one at all. `cl-process-kit` (external process
@@ -59,24 +70,41 @@ notably, is itself built with "CPS proof search" per its own
 description -- answers a different question (searching for a proof) than
 anything here needs solved. `cl-log-kit` is the one candidate with a real,
 if single, call site (`src/executor.lisp`'s worker-loop `(FORMAT
-*ERROR-OUTPUT* ...)`), discussed on its own terms above.
+*ERROR-OUTPUT* ...)`), discussed on its own terms above -- still not
+adopted, for the same circular-dependency reason as ever (`cl-log-kit`
+itself depends on `cl-concurrent-kit`).
+
+`cl-host-kit` is used only test/benchmark-adjacent, transitively through
+`cl-cli`, never as a `cl-concurrent-kit` main-system dependency.
 
 ## No backward-compatibility surface to eliminate
 
 A codebase carries backward-compatibility weight when a later API replaces
 an earlier one and both must keep working -- a deprecated alias, a
 compatibility shim, a `#+old-sbcl` branch preserved past its last caller.
-Every release so far (v0.1.0 through v0.4.2) has changed public symbols'
+Every release so far (v0.1.0 through v0.5.0) has changed public symbols'
 shapes outright rather than deprecating them -- `%CHANNEL-DEQUEUE` and the
 ring-buffer `CHANNEL`/`%WORK-QUEUE` internals replaced the FIFO-backed ones
 wholesale in v0.3.0, for instance, with no transitional alias kept alongside
 either. Grepping the tree confirms the result: zero matches across `src/`,
 `t/`, and the `.asd` for `deprecated`, `legacy`, `obsolete`, `backward-compat`,
-or `shim`, in any casing -- re-verified as part of the v0.4.0 refactor, not
-just inherited from an earlier audit. The absence is the intended state, not
-a gap -- keep it that way by deleting rather than deprecating when a public
-symbol's shape changes, exactly as `cl-concurrent-kit.asd`'s `:version
-"0.4.2"` (no `1.x` compatibility promise yet) allows.
+or `shim`, in any casing -- re-verified as part of the v0.4.0 refactor and
+again after the 2026 file-splitting/macro-consolidation pass (which moved
+code across eight files without leaving an old name behind at either end),
+not just inherited from an earlier audit. The absence is the intended
+state, not a gap -- keep it that way by deleting rather than deprecating
+when a public symbol's shape changes, exactly as `cl-concurrent-kit.asd`'s
+pre-`1.x` version (no compatibility promise yet) allows.
+
+The CL-DATE-KIT/CL-BOUNDARY-KIT adoption above is this rule applied to its
+largest surface yet: every public `:TIMEOUT` argument changed from a raw
+seconds number to a `CL-DATE-KIT:DURATION` in one pass, with no transitional
+period accepting both shapes. A dual raw-number/Duration `:TIMEOUT` was
+considered and rejected -- it would have meant a runtime `TYPECASE` (or
+`REAL`-vs-`DURATION` dispatch) at every one of the ten affected call sites,
+forever, the textbook shape of the compatibility shim this section exists to
+keep out. Every caller in this repository's own `t/*.lisp` and every example
+in `docs/src` was converted in the same commit as the API change itself.
 
 ## The CONDITION-WAIT timeout contract
 
@@ -183,8 +211,8 @@ Cancellation is cooperative rather than forced -- not for want of a
 mechanism, which `WITH-TIMEOUT` has and the next section explains, but because
 forcing it would cost the guarantee a scope exists to make. `CHECK-CANCELLED`
 is the hook a long-running task calls at a point where stopping is safe.
-`WITH-TASK-SCOPE` accepts an optional `:TIMEOUT` (seconds) bounding only the
-wait for already-running children once the body itself has finished; on
+`WITH-TASK-SCOPE` accepts an optional `:TIMEOUT` (a `CL-DATE-KIT:DURATION`)
+bounding only the wait for already-running children once the body itself has finished; on
 expiry every remaining child is cancelled the same cooperative way and
 `OPERATION-TIMED-OUT` is signaled. `TASK-SCOPE`'s own bookkeeping (the
 struct, child registration, cancellation) lives in `src/scope-state.lisp`;
@@ -304,7 +332,7 @@ judgment rather than a mechanical "split everything over N bytes" rule:
 - `AWAIT-BARRIER` (`src/latch.lisp`) had "I am the last party to arrive" and
   "I must wait" as an inline `IF`'s two branches; they are now
   `RELEASE-AS-LAST-PARTY` and `WAIT-FOR-RELEASE`.
-- `PROMISE-ALL` and `PROMISE-ANY` (`src/promise-combinators.lisp`) each
+- `PROMISE-ALL` and `PROMISE-ANY` (`src/promise-racing.lisp`) each
   repeated the same three-step "store the observer, subscribe it, unsubscribe
   it again if the race was already decided by the time `%OBSERVE-PROMISE`
   returned" around their own differing observer closures. `%WITH-RACE-CLEANUP`
@@ -335,6 +363,102 @@ judgment rather than a mechanical "split everything over N bytes" rule:
   `RETURN-FROM` somewhere it can no longer reach `ATTEMPT`, or add a thin
   wrapper around it purely to satisfy a byte-count ranking -- renaming the
   code without clarifying it.
+
+## Four files split along their own internal seam
+
+`channel.lisp`, `stream.lisp`, `promise-combinators.lisp`, and
+`executor.lisp` each grew past a size where one file was doing two
+genuinely separable jobs. Each was split by finding the actual seam --
+never a mechanical "cut at N lines" -- and the load-order direction across
+the split was decided by grepping the whole tree for every moved symbol
+first, not assumed:
+
+- `channel.lisp` keeps the `CHANNEL` struct and its
+  `SEND`/`RECV`/`TRY-SEND`/`TRY-RECV`/`CLOSE-CHANNEL` core, plus the
+  `+CHANNEL-NOTIFY-*+` constants and `%CHANNEL-NOTIFY` macro those functions
+  expand at compile time. `channel-waiters.lisp` holds the multi-channel
+  waiter-registration machinery (`%CHANNEL-WAITER-BUCKET`,
+  `%CHANNEL-NOTIFY-WAITERS`, `%CHANNEL-ADD-WAITER`, `%CHANNEL-REMOVE-WAITER`)
+  that `SELECT` and `%RUN-DYNAMIC-SELECT` consume externally, and loads
+  *after* `channel.lisp` -- the reverse of the split's own file-list order --
+  because those functions need the `CHANNEL` struct and `%WITH-CHANNEL-LOCK`
+  macro already defined at their own compile time.
+- `stream.lisp` keeps the producing stages (`%START-CHANNEL-STAGE` through
+  `CHANNEL-SCAN`) and `%CONSUME-CHANNEL` itself; `stream-terminal.lisp` holds
+  only the six functions that call it to consume a channel down to one
+  promise result (`CHANNEL-REDUCE`, `CHANNEL-COLLECT`, `CHANNEL-EACH`,
+  `CHANNEL-SOME`, `CHANNEL-EVERY`, `CHANNEL-FIND`). `%CONSUME-CHANNEL` itself
+  stayed in `stream.lisp` rather than moving with its most obvious callers:
+  `stream-fan-out.lisp` and `stream-partition.lisp` also expand it, at five
+  more call sites the initial split missed by only checking the two files
+  being split -- discovered when moving it produced a hard compile error
+  (`return for unknown block: NIL`, from a bare `(RETURN)` that was supposed
+  to be inside the macro's own `(LOOP ...)` expansion) in a *third* file that
+  compiles before `stream-terminal.lisp` ever would.
+- `promise-combinators.lisp` keeps the chaining/settlement family;
+  `promise-racing.lisp` holds the racing family, as described above.
+- `executor.lisp` keeps the `EXECUTOR`/`%EXECUTOR-TASK` machinery;
+  `executor-work-queue.lisp` holds the internal `%WORK-QUEUE` ring-buffer
+  subsystem (struct, `%WITH-WORK-QUEUE-LOCK`, `%WORK-QUEUE-GROW`/`PUSH`/`POP`)
+  and loads *before* `executor.lisp`, since `EXECUTOR-SHUTDOWN-P` and
+  friends expand `%WITH-WORK-QUEUE-LOCK` at their own compile time.
+  `%WORK-QUEUE-CLOSE` stayed in `executor.lisp` despite its name -- it takes
+  an `EXECUTOR`, not a `%WORK-QUEUE`, and settles cancelled tasks via
+  `%EXECUTOR-TASK-CANCEL`, so it belongs to the layer that owns those.
+
+The `channel.lisp`/`stream.lisp` pair is the cautionary tale worth keeping:
+a symbol's "natural" home by proximity to its most obvious use is not the
+same question as which file's compile-time dependencies actually require
+it, and only a whole-tree grep answers the second question reliably. An
+undefined *macro* at a caller's compile time fails loudly, in a way that
+points at the wrong cause (a stray `RETURN`, not a missing definition); an
+undefined *function* reference in the same position -- confirmed while
+diagnosing `channel-waiters.lisp`'s own, correctly-decided load order --
+only produces a `STYLE-WARNING` and an otherwise-successful, silently
+incorrect build. Neither hazard shows up from testing the split files in
+isolation; only compiling the whole system, in `:SERIAL T` order, catches it.
+
+## EXECUTOR-MAP's own settlement bug, caught before it shipped
+
+`EXECUTOR-MAP` (`src/executor.lisp`) used to end with
+`(MAP 'LIST (FUNCTION AWAIT) PROMISES)` -- a manual, in-order wait over
+each submitted call's own promise. A continuation-passing rewrite to
+`(AWAIT (PROMISE-ALL PROMISES))` looked like a direct CPS-composition win
+(`PROMISE-ALL` already exists, already composes N promises into one), and
+would have passed the existing test suite, which asserts only `(SIGNALS
+SIMPLE-ERROR ...)` on a single-failure case -- not which failure, nor
+whether every submitted call had actually settled first.
+
+It is not equivalent. `PROMISE-ALL` decides and delivers as soon as the
+*first-in-time* failure is observed, stopping observation of every other
+still-pending input; the original `MAP`/`AWAIT` loop blocks through each
+promise in *list order*, so it always reports the lowest-index failure once
+every call up to and including it has settled -- exactly what
+`EXECUTOR-MAP`'s own docstring promises ("propagates once every
+already-submitted call has itself settled") and what a test added
+alongside this fix (`t/executor-test.lisp`, two elements where the
+higher-index one fails first in time) is built to tell apart. The
+CPS-correct fix instead composes through `PROMISE-ALL-SETTLED`
+(`src/promise-combinators.lisp`) -- which waits for every input regardless
+of outcome -- and picks the first `:FAILED` settlement out of its
+in-order result list by hand:
+
+```lisp
+(let ((settlements (await (promise-all-settled promises))))
+  (dolist (settlement settlements)
+    (when (eq :failed (promise-settlement-state settlement))
+      (error (promise-settlement-condition settlement))))
+  (mapcar (function promise-settlement-value) settlements))
+```
+
+Still one CPS-composed wait, no manual per-item loop -- but the *right*
+combinator for a contract that requires every input to settle, not the one
+that merely composes promises in general. The lesson generalizes: two
+`PROMISE-COMBINATORS` functions can both be "the CPS way to wait on many
+promises" and still guarantee different things about ordering and
+completeness; picking one over the other is a semantic decision the
+docstring and the test suite must already answer, not a mechanical
+find-the-nearest-combinator substitution.
 
 ## Variable-arity SELECT for stream fan-in
 
@@ -370,15 +494,25 @@ through it instead.
 ## One deadline-wait shape, one macro
 
 `AWAIT`, `SEND`, `RECV`, and `WITH-TASK-SCOPE`'s child wait all follow the
-same shape: compute a deadline once from a `:TIMEOUT` in seconds, block on
-`%WAIT-UNTIL` until a predicate is satisfied or the deadline passes, and
-signal `OPERATION-TIMED-OUT` on the latter. `src/primitives.lisp`'s
+same shape: convert the caller's `:TIMEOUT` (a `CL-DATE-KIT:DURATION`) to a
+seconds rational once, at that one public entry point, compute a deadline
+once from it, block on `%WAIT-UNTIL` until a predicate is satisfied or the
+deadline passes, and signal `OPERATION-TIMED-OUT` on the latter (its own
+`:TIMEOUT` slot carries that same seconds rational, not the original
+`DURATION` object -- see `src/conditions.lisp`). `src/primitives.lisp`'s
 `%WITH-DEADLINE-WAIT` macro is that shape written once; every caller supplies
 only what actually varies -- the condition variable, the lock, the predicate,
 and the operation keyword the resulting condition names. `src/channel.lisp`'s
 unbuffered `SEND` calls it twice against one shared deadline (see its own
 comment for why the deadline, not the timeout, is what must not be
-recomputed between the two waits).
+recomputed between the two waits). The deadline itself is computed against
+`*CLOCK*` (a `CL-BOUNDARY-KIT:CLOCK`, `src/primitives.lisp`) rather than a
+direct `GET-INTERNAL-REAL-TIME` call -- real by default, rebindable to a
+`CL-BOUNDARY-KIT:FAKE-CLOCK` so a test can make the deadline *arithmetic*
+deterministic. This does not extend to the actual blocking waits
+themselves: `CONDITION-WAIT`, `WAIT-ON-SEMAPHORE`, and `SB-EXT:WITH-TIMEOUT`
+are real SBCL primitives with no fake-clock hook, so a test asserting an
+actual timeout still sleeps in real time, same as before.
 
 The other half of that arithmetic -- an absolute deadline back down to
 "seconds remaining, floored at zero" for whatever blocking primitive is
@@ -392,7 +526,7 @@ behavior right instead of three copies to keep in sync.
 ## One consume-loop shape, one macro
 
 `CHANNEL-REDUCE`, `CHANNEL-COLLECT`, `CHANNEL-EACH`, `CHANNEL-SOME`,
-`CHANNEL-EVERY`, and `CHANNEL-FIND` (`src/stream.lisp`); `CHANNEL-BROADCAST`,
+`CHANNEL-EVERY`, and `CHANNEL-FIND` (`src/stream-terminal.lisp`); `CHANNEL-BROADCAST`,
 `CHANNEL-TAKE`, `CHANNEL-TAKE-WHILE`, and `CHANNEL-BATCH`
 (`src/stream-fan-out.lisp`); and `CHANNEL-PARTITION-BY`
 (`src/stream-partition.lisp`) all drive the same loop: check `SCOPE`'s
@@ -450,10 +584,18 @@ duplicated between them.
 
 `src/promise.lisp` is the core write-once cell (`MAKE-PROMISE`,
 `DELIVER`/`DELIVER-ERROR`, `AWAIT`, and the thread-spawning `FUTURE`);
-`src/promise-combinators.lisp` is everything that derives a new promise from
-existing ones (`PROMISE-ALL-SETTLED`, `PROMISE-RACE`, `PROMISE-THEN`) --
-the same split `src/scope-state.lisp`/`src/scope.lisp` already makes between
-a layer's own state and what is built on top of it.
+`src/promise-combinators.lisp` and `src/promise-racing.lisp` together are
+everything that derives a new promise from existing ones -- the same split
+`src/scope-state.lisp`/`src/scope.lisp` already makes between a layer's own
+state and what is built on top of it. `src/promise-combinators.lisp` keeps
+the chaining/settlement family (`PROMISE-THEN`, `PROMISE-CATCH`,
+`PROMISE-FINALLY`, `PROMISE-ALL-SETTLED`), which mirror or observe every
+input through to completion and never stop watching one early;
+`src/promise-racing.lisp` holds the family that races inputs against each
+other and stops observing the rest once the outcome is decided
+(`PROMISE-RACE`, `PROMISE-ALL`, `PROMISE-ANY`, `PROMISE-TIMEOUT`) and the
+`%UNLESS-DECIDED`/`%DECIDE-ONCE`/`%WITH-RACE-CLEANUP` machinery that shape
+needs, which promise-combinators.lisp's own family does not.
 
 `PROMISE-THEN` is built directly on the same
 continuation-registration primitive `PROMISE-ALL-SETTLED` already used
@@ -505,9 +647,9 @@ would.
 Collecting the continuation-passing shapes above in one place: `%OBSERVE-PROMISE`
 (`src/promise.lisp`) is the primitive one, a callback registered against a
 promise and invoked with its outcome by whichever thread settles it, never
-polled for. `PROMISE-THEN`/`PROMISE-CATCH`/`PROMISE-FINALLY` and every
-combinator in `src/promise-combinators.lisp` (`PROMISE-ALL`, `PROMISE-ANY`,
-`PROMISE-RACE`, `PROMISE-ALL-SETTLED`, `PROMISE-TIMEOUT`) are built on it
+polled for. `PROMISE-THEN`/`PROMISE-CATCH`/`PROMISE-FINALLY`/`PROMISE-ALL-SETTLED`
+(`src/promise-combinators.lisp`) and `PROMISE-ALL`/`PROMISE-ANY`/`PROMISE-RACE`/
+`PROMISE-TIMEOUT` (`src/promise-racing.lisp`) are all built on it
 directly, never on a thread, a queue, or a poll loop of their own. `SUBMIT`'s
 `:ON-SETTLE` (`src/executor.lisp`) is the same primitive reused for the
 executor's own bookkeeping (freeing a worker slot) rather than a public
@@ -558,18 +700,26 @@ in this codebase.
 
 ## Which shapes become a DEFMACRO, and which stay a DEFUN
 
-`src/` currently defines 21 macros against 145 functions: `%WITH-CHANNEL-LOCK`,
+`src/` currently defines 22 macros against 137 functions (`paredit inspect
+definitions`'s own by-category count -- the authoritative one; re-run it
+rather than hand-recounting after a future change): `%WITH-CHANNEL-LOCK`,
 `%CHANNEL-NOTIFY`, `%DEFINE-KIT-CONDITION`, `%WITH-WORK-QUEUE-LOCK`,
 `WITH-EXECUTOR`, `WITH-LOCK-HELD`, `%WAIT-UNTIL`, `%WITH-DEADLINE-WAIT`,
 `%WITH-SCOPE-LOCK`, `%UNLESS-DECIDED`, `%DECIDE-ONCE`, `%WITH-RACE-CLEANUP`,
 `WITH-TASK-SCOPE`, `%WITH-CHANNEL-LIST-STAGE`, `%WITH-CLOSED-STAGE-OUTPUTS`,
 `%WITH-CHANNEL-STAGE`, `CHANNEL-PRODUCER`, `%CONSUME-CHANNEL`, `FUTURE`,
-`SELECT`, and `WITH-TIMEOUT`. That ratio is not an oversight to correct
-toward more macros; it reflects a specific, checkable criterion for which
-shape a given piece of code needs -- checked again, and found to justify one
-more macro, when `%START-CHANNEL-STAGE`'s call sites turned out to repeat the
-same unevaluated-body wrapping at every one of them (see "%START-CHANNEL-STAGE
-... `%WITH-CHANNEL-STAGE`" above).
+`SELECT`, `WITH-TIMEOUT`, and `%BOOTSTRAP-CHANNEL-WORKERS`. That ratio is
+not an oversight to correct toward more macros; it reflects a specific,
+checkable criterion for which shape a given piece of code needs -- checked
+again, and found to justify one more macro twice over: once when
+`%START-CHANNEL-STAGE`'s call sites turned out to repeat the same
+unevaluated-body wrapping at every one of them (see "%START-CHANNEL-STAGE
+... `%WITH-CHANNEL-STAGE`" above), and again when `CHANNEL-MAP-CONCURRENT`
+and `CHANNEL-MAP-UNORDERED` (`src/stream-map-concurrent.lisp`) turned out to
+repeat an identical ~15-line worker-pool bootstrap block that needed a
+`RETURN-FROM` naming its own caller -- exactly the "`BODY` unevaluated"
+case a function cannot express, since only a macro's expansion can name the
+right enclosing function at each of its two call sites.
 
 A macro earns its place here for one of two reasons. Either it needs
 `BODY` unevaluated -- an unwind-protected critical section
@@ -585,7 +735,7 @@ expansion specifically so choosing a ready clause is a direct call, not a
 dispatch through a stored handler vector (see "SELECT sleeps; it does not
 poll" above).
 
-Neither reason applies to most of the other 145. `src/stream-fan-in.lisp`'s
+Neither reason applies to most of the other 137. `src/stream-fan-in.lisp`'s
 `%RUN-DYNAMIC-SELECT` is the clearest negative case: it exists *because*
 `SELECT`'s macro-fixed clause count cannot express a multiplexer over a
 channel list whose length is only known at runtime, so making it a macro
@@ -678,7 +828,7 @@ This project's actual stopping rule, applied consistently everywhere above:
   DEFUN" above): a shape earns a macro only for one of two checkable reasons
   -- needing `BODY` unevaluated, or a compile-time-fixed shape a real
   function call could not express (`SELECT`'s clause count). Every one of
-  this codebase's 145 functions was written as a function because neither
+  this codebase's 137 functions was written as a function because neither
   reason applies to it; converting one to a macro without one of those two
   reasons would not raise the abstraction level, it would only make the
   function harder to trace with `DESCRIBE-FUNCTION` and impossible to pass

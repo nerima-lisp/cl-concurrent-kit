@@ -2,6 +2,16 @@
 
 All symbols live in the `CL-CONCURRENT-KIT` package.
 
+`:TIMEOUT` on this library's own blocking operations -- `AWAIT`, `SEND`,
+`RECV`, `SELECT`'s `:TIMEOUT` clause, `AWAIT-LATCH`, `AWAIT-BARRIER`,
+`SHUTDOWN-EXECUTOR`, `AWAIT-EXECUTOR-TERMINATION`, `WITH-EXECUTOR`'s
+`SHUTDOWN-TIMEOUT`, `WITH-TASK-SCOPE`, `PROMISE-TIMEOUT`, and `WITH-TIMEOUT`
+-- is a `cl-date-kit:duration`, or `NIL` for no deadline. The thin `sb-thread`
+wrappers below (`JOIN-THREAD`, `CONDITION-WAIT`, `WAIT-ON-SEMAPHORE`) pass
+their `:TIMEOUT` straight through to SBCL and so still take a raw number of
+seconds, as does `OPERATION-TIMED-OUT-TIMEOUT`, which reports the elapsed
+deadline as an exact rational.
+
 ## Threads
 
 | Symbol | Description |
@@ -39,11 +49,12 @@ All symbols live in the `CL-CONCURRENT-KIT` package.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(seconds &body body)` | Macro: run `body` under a deadline of `seconds` seconds, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `seconds` `NIL`, zero, or negative means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#preemptive-with-timeout-cooperative-scopes). |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#preemptive-with-timeout-cooperative-scopes). |
 
-Note the shape of `seconds`: it is a bare form, as in `sb-ext:with-timeout`,
+Note the shape of `duration`: it is a bare form, as in `sb-ext:with-timeout`,
 not a one-element list as in `bordeaux-threads:with-timeout`. Write
-`(with-timeout 5 ...)`, not `(with-timeout (5) ...)`.
+`(with-timeout (cl-date-kit:duration-of-seconds 5) ...)`, not
+`(with-timeout ((cl-date-kit:duration-of-seconds 5)) ...)`.
 
 ## Promises and futures
 
@@ -106,7 +117,7 @@ not a one-element list as in `bordeaux-threads:with-timeout`. Write
 
 | Symbol | Description |
 |---|---|
-| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `TIMEOUT` (seconds) bounds only the wait for already-running children once the body itself has returned or signalled; on expiry every remaining child is cancelled cooperatively and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TASK-SCOPE`. That is the same condition type `WITH-TIMEOUT` signals, so a handler around a scope whose body uses `WITH-TIMEOUT` must read `OPERATION-TIMED-OUT-OPERATION` to tell which deadline expired. |
+| `WITH-TASK-SCOPE` `((scope-var &key timeout) &body body)` | Macro: a nursery for `SPAWN`ed tasks. `TIMEOUT` (a `cl-date-kit:duration`) bounds only the wait for already-running children once the body itself has returned or signalled; on expiry every remaining child is cancelled cooperatively and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TASK-SCOPE`. That is the same condition type `WITH-TIMEOUT` signals, so a handler around a scope whose body uses `WITH-TIMEOUT` must read `OPERATION-TIMED-OUT-OPERATION` to tell which deadline expired. |
 | `SPAWN` `(scope function &key executor)` | Start a tracked child task, return its `PROMISE`. With `EXECUTOR`, the child runs on that executor's worker pool instead of a dedicated thread. |
 | `CHECK-CANCELLED` `(scope)` | Signal `TASK-CANCELLED` if `scope` has been cancelled. |
 

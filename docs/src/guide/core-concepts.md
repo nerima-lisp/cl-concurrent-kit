@@ -99,7 +99,7 @@ a new thread and returns a `PROMISE` for it. The scope guarantees:
 - **No child outlives the scope.** `WITH-TASK-SCOPE` does not return until
   every `SPAWN`ed thread has finished, whether it succeeded, failed, or is
   still running when the body itself throws -- or until an optional
-  `:TIMEOUT` (seconds) elapses waiting for stragglers, at which point
+  `:TIMEOUT` (a `cl-date-kit:duration`) elapses waiting for stragglers, at which point
   `OPERATION-TIMED-OUT` is signaled instead and every remaining child is
   cancelled the same cooperative way a sibling failure would cancel them.
 - **A child's failure is never silently dropped.** If the body returns
