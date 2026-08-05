@@ -5,13 +5,13 @@
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.4.2";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
 
-Or, from a plain ASDF setup, clone the repository somewhere on your
-`CL_SOURCE_REGISTRY` and:
+Or, from a plain ASDF setup, clone the repository (and its `cl-boundary-kit`/
+`cl-date-kit` dependencies) somewhere on your `CL_SOURCE_REGISTRY` and:
 
 ```lisp
 (asdf:load-system "cl-concurrent-kit")
@@ -41,6 +41,17 @@ Or, from a plain ASDF setup, clone the repository somewhere on your
         (b (cl-concurrent-kit:spawn scope (lambda () (* 3 4)))))
     (+ (cl-concurrent-kit:await a) (cl-concurrent-kit:await b))))
 ;; => 15, and both tasks are guaranteed to have finished before this returns.
+```
+
+## A timeout
+
+Every `:TIMEOUT` argument in this library takes a `cl-date-kit:duration`,
+not a raw number of seconds:
+
+```lisp
+(cl-concurrent-kit:await (cl-concurrent-kit:future (sleep 5))
+                          :timeout (cl-date-kit:duration-of-millis 50))
+;; signals CL-CONCURRENT-KIT:OPERATION-TIMED-OUT
 ```
 
 Next: [Core concepts](guide/core-concepts.md) for the ideas behind each layer, or

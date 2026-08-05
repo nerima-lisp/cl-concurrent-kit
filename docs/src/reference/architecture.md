@@ -82,7 +82,7 @@ itself depends on `cl-concurrent-kit`).
 A codebase carries backward-compatibility weight when a later API replaces
 an earlier one and both must keep working -- a deprecated alias, a
 compatibility shim, a `#+old-sbcl` branch preserved past its last caller.
-Every release so far (v0.1.0 through v0.5.0) has changed public symbols'
+Every release so far (v0.1.0 through v0.6.0) has changed public symbols'
 shapes outright rather than deprecating them -- `%CHANNEL-DEQUEUE` and the
 ring-buffer `CHANNEL`/`%WORK-QUEUE` internals replaced the FIFO-backed ones
 wholesale in v0.3.0, for instance, with no transitional alias kept alongside

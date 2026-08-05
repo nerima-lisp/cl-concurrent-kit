@@ -1,6 +1,6 @@
 # cl-concurrent-kit
 
-A dependency-free, SBCL-only concurrency toolkit.
+An SBCL-only concurrency toolkit, built directly on `sb-thread`.
 
 Common Lisp has no standard concurrency library, and bordeaux-threads exists
 to paper over the differences between implementations' native thread APIs.
@@ -8,6 +8,12 @@ This project takes the opposite bet, in line with [nerima-lisp's coding
 standard](https://github.com/nerima-lisp/.github/blob/main/CODING_STANDARD.md):
 target SBCL only, wrap `sb-thread` directly, and spend the effort that
 portability would have cost on a richer set of concurrency shapes instead.
+Every `:TIMEOUT` argument across that surface accepts a
+[`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit), with
+[`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) supplying
+the injectable clock behind the deadline arithmetic that measures it -- see
+[Architecture](reference/architecture.md) for why those two, and only those
+two, earned an exception to "wrap `sb-thread` and nothing else."
 
 ## Layers
 

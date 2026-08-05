@@ -4,16 +4,19 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-MkDocs%20Material-0a7a5a)](https://nerima-lisp.github.io/cl-concurrent-kit/)
 
-A dependency-free, SBCL-only concurrency toolkit. It wraps `sb-thread` into
-the primitives a portability layer such as bordeaux-threads would offer
-(threads, locks, condition variables, semaphores), then builds the
-concurrency shapes familiar from modern languages on top: promises/futures
+An SBCL-only concurrency toolkit, built directly on `sb-thread`. It wraps
+`sb-thread` into the primitives a portability layer such as bordeaux-threads
+would offer (threads, locks, condition variables, semaphores), then builds
+the concurrency shapes familiar from modern languages on top: promises/futures
 with `.then()`-style combinators, CSP channels with `select`, a fixed-size
 executor with bounded queues and observability, structured-concurrency
 scopes with cooperative cancellation, a preemptive `WITH-TIMEOUT` for
 bounding an arbitrary body, countdown latches and cyclic barriers, and a
 reactive stream layer of `CHANNEL-*` operators (map/filter/merge/zip and the
-rest) built on top of channels.
+rest) built on top of channels. Every `:TIMEOUT` argument accepts a
+[`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit); the
+deadline arithmetic behind it is driven by an injectable
+[`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) clock.
 
 Full documentation is published at <https://nerima-lisp.github.io/cl-concurrent-kit/>.
 The source for that site lives in [docs/src/](docs/src/).
@@ -40,7 +43,7 @@ The source for that site lives in [docs/src/](docs/src/).
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.4.2";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
