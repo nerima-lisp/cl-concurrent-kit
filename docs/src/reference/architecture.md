@@ -54,7 +54,7 @@ site, not a dependency in search of a use" test: `cl-json-kit`,
 `cl-regex-kit`, `cl-codec-kit`, `cl-parser-kit`, and `cl-tty-kit` all answer
 a data-format, text, or host-environment need this package -- concurrency
 primitives plus deadline arithmetic -- has no call site for at all.
-`cl-dataflow` is the closest remaining *spirit* match (composable
+`cl-dataflow-kit` is the closest remaining *spirit* match (composable
 computation graphs) but overlaps this project's own domain closely enough
 that depending on it would mean wrapping its abstractions around this
 package's -- the adapter this architecture still avoids -- rather than
@@ -65,7 +65,7 @@ compiler, a shell, a terminal multiplexer, a terminal editor) with no
 natural connection to this one at all. `cl-process-kit` (external process
 execution) and `cl-history-kit` (REPL/shell history) are interactive-tooling
 concerns this in-process concurrency library has no call site for, same as
-the data-format group above. `cl-prolog` -- a logic-programming engine that,
+the data-format group above. `cl-prolog-kit` -- a logic-programming engine that,
 notably, is itself built with "CPS proof search" per its own
 description -- answers a different question (searching for a proof) than
 anything here needs solved. `cl-log-kit` is the one candidate with a real,
