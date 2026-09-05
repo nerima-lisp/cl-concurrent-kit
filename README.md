@@ -4,11 +4,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Documentation](https://img.shields.io/badge/docs-MkDocs%20Material-0a7a5a)](https://nerima-lisp.github.io/cl-concurrent-kit/)
 
-An SBCL-only concurrency toolkit, built directly on `sb-thread`. It wraps
-`sb-thread` into the primitives a portability layer such as bordeaux-threads
-would offer (threads, locks, condition variables, semaphores), then builds
-the concurrency shapes familiar from modern languages on top: promises/futures
-with `.then()`-style combinators, CSP channels with `select`, a fixed-size
+An SBCL-only concurrency toolkit, built directly on `sb-thread`. It provides
+wrappers for threads, locks, condition variables, and semaphores, then builds
+promises/futures with `.then()`-style combinators, CSP channels with `select`, a fixed-size
 executor with bounded queues and observability, structured-concurrency
 scopes with cooperative cancellation, a preemptive `WITH-TIMEOUT` for
 bounding an arbitrary body, countdown latches and cyclic barriers, and a

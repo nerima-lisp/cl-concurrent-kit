@@ -1,16 +1,8 @@
 # Roadmap
 
-Not yet built, and not promised for a specific release:
-
-- **Timeout-aware `CHECK-CANCELLED` propagation into `AWAIT`/`RECV`/`SEND`.**
-  Today cancellation is purely cooperative via explicit `CHECK-CANCELLED`
-  calls; a task blocked inside `AWAIT` or `RECV` does not observe its scope's
-  cancellation until it returns to a point that calls `CHECK-CANCELLED`
-  itself.
-- **Buffered-channel backpressure metrics** (current depth, high-water mark)
-  for observability. Executors gained the equivalent for their own work
-  queue (`EXECUTOR-QUEUE-DEPTH`/`EXECUTOR-HIGH-WATER-MARK`); a plain
-  `CHANNEL` still has no such introspection.
-- Porting `src/primitives.lisp` to another implementation is out of scope for
-  this project (see [Compatibility](../reference/compatibility.md)) but would be the only
-  file that needs it.
+- Add scope-cancellation wakeups for tasks blocked in `AWAIT`, `RECV`, or
+  `SEND`. Cancellation is currently observed at explicit `CHECK-CANCELLED`
+  calls.
+- Add current-depth and high-water-mark metrics to buffered channels.
+- Support Common Lisp implementations other than SBCL by porting
+  `src/primitives.lisp`; see [Compatibility](../reference/compatibility.md).

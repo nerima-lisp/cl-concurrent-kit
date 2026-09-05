@@ -2,18 +2,15 @@
 
 An SBCL-only concurrency toolkit, built directly on `sb-thread`.
 
-Common Lisp has no standard concurrency library, and bordeaux-threads exists
-to paper over the differences between implementations' native thread APIs.
-This project takes the opposite bet, in line with [nerima-lisp's coding
-standard](https://github.com/nerima-lisp/.github/blob/main/CODING_STANDARD.md):
-target SBCL only, wrap `sb-thread` directly, and spend the effort that
-portability would have cost on a richer set of concurrency shapes instead.
+Common Lisp has no standard concurrency library, and bordeaux-threads provides
+a portability layer over implementation-specific thread APIs. This project
+targets SBCL and wraps `sb-thread` directly, providing promises, channels,
+executors, scopes, and streams in one library.
 Every `:TIMEOUT` argument across that surface accepts a
 [`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit), with
-[`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) supplying
-the injectable clock behind the deadline arithmetic that measures it -- see
-[Architecture](reference/architecture.md) for why those two, and only those
-two, earned an exception to "wrap `sb-thread` and nothing else."
+  [`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) supplying
+  the injectable clock used for deadline arithmetic. See
+  [Architecture](reference/architecture.md) for the integration details.
 
 ## Layers
 
@@ -38,20 +35,19 @@ cl-concurrent-kit is five layers, each built only on the ones below it:
    `:TIMEOUT` has elapsed) before the scope returns, and that a failed
    task's condition always resurfaces.
 
-Three further pieces build on those five rather than adding a strictly new
-layer of their own:
+Three further pieces build on those five:
 
 - **Preemptive timeouts** (`src/timeout.lisp`) -- `WITH-TIMEOUT`, the one
-  deadline here that bounds an *arbitrary* body rather than a wait this
+  deadline here that bounds an *arbitrary* body rather than a wait that this
   library implements itself, by interrupting the running thread. The
-  counterpart to structured concurrency's deliberately cooperative
+  counterpart to structured concurrency's cooperative
   cancellation, not a replacement for it.
 - **Countdown latches and barriers** (`src/latch.lisp`) -- `COUNTDOWN-LATCH`
   and `BARRIER`, both able to take an optional `WITH-TASK-SCOPE` `:SCOPE` so
   a blocked wait unblocks on cancellation the same way `AWAIT` does.
-- **Reactive streams** (`src/stream.lisp` and friends) -- Rx-style `CHANNEL-*`
-  operators (`CHANNEL-MAP`, `CHANNEL-MERGE`, `CHANNEL-DEBOUNCE`, and around
-  thirty more) that compose channels into pipelines, each stage run via
+- **Reactive streams** (`src/stream.lisp` and friends) -- `CHANNEL-*`
+  operators (`CHANNEL-MAP`, `CHANNEL-MERGE`, `CHANNEL-DEBOUNCE`, and others)
+  that compose channels into pipelines, each stage run via
   `SPAWN` or an executor rather than a hand-written read/transform/write
   loop.
 

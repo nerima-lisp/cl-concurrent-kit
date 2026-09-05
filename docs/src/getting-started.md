@@ -17,7 +17,7 @@ Or, from a plain ASDF setup, clone the repository (and its `cl-boundary-kit`/
 (asdf:load-system "cl-concurrent-kit")
 ```
 
-## A future
+## A future value
 
 ```lisp
 (cl-concurrent-kit:await (cl-concurrent-kit:future (+ 1 2 3)))

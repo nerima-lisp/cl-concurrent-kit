@@ -49,7 +49,7 @@ deadline as an exact rational.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#preemptive-with-timeout-cooperative-scopes). |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#threading-primitives). |
 
 Note the shape of `duration`: it is a bare form, as in `sb-ext:with-timeout`,
 not a one-element list as in `bordeaux-threads:with-timeout`. Write
