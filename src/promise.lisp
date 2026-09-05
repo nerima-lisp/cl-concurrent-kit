@@ -1,10 +1,7 @@
 ;;;; src/promise.lisp
 ;;;;
-;;;; PROMISE is a write-once cell settled from one thread and read from
-;;;; others: DELIVER/DELIVER-ERROR settle it (successfully or not), AWAIT
-;;;; blocks until it is settled. FUTURE spawns a thread that settles a fresh
-;;;; promise with the value (or condition) its body produces -- the
-;;;; JS/Rust-style async handle built directly on the PRIMITIVES layer.
+;;;; PROMISE is a write-once cell observed across threads. FUTURE runs a body
+;;;; on a new thread and settles a promise with its values or condition.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defstruct (promise (:constructor %make-promise ()))

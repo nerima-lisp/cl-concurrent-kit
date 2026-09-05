@@ -1,18 +1,7 @@
 ;;;; src/stream-fan-in.lisp
 ;;;;
-;;;; Many-inputs, one-output stream stages. Built on SRC/STREAM.LISP's stage
-;;;; machinery -- see its header comment for the shared :SCOPE/cancellation
-;;;; contract every stage here follows.
-;;;;
-;;;; CHANNEL-MERGE, CHANNEL-MERGE-MAP, and CHANNEL-SWITCH-MAP all need fair
-;;;; multiplexing over a channel set whose SIZE changes at runtime (inputs
-;;;; close and are dropped; CHANNEL-MERGE-MAP/CHANNEL-SWITCH-MAP open new
-;;;; inner channels as FUNCTION returns them). SRC/SELECT.LISP's SELECT
-;;;; macro cannot express that: its clause count is fixed at macroexpansion
-;;;; time. %RUN-DYNAMIC-SELECT below is a small runtime multiplexer built
-;;;; directly on the same private waiter registration SELECT itself uses
-;;;; (src/channel.lisp's %CHANNEL-ADD-WAITER/%CHANNEL-REMOVE-WAITER), so a
-;;;; dynamic clause set still sleeps between probes instead of busy-polling.
+;;;; Many-input, one-output stages. Runtime-sized channel sets use the same
+;;;; waiter protocol as SELECT through the dynamic multiplexer below.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defun %try-dynamic-select-clauses (clauses)

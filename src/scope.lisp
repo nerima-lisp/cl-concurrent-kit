@@ -1,24 +1,7 @@
 ;;;; src/scope.lisp
 ;;;;
-;;;; Structured concurrency (Kotlin coroutine scopes, Swift task groups,
-;;;; Python trio nurseries): WITH-TASK-SCOPE guarantees every task SPAWNed
-;;;; within its body has finished -- successfully, by error, or cancelled --
-;;;; before it returns, and a failed task's condition always resurfaces
-;;;; somewhere, instead of being silently dropped on a detached thread.
-;;;;
-;;;; Cancellation here is COOPERATIVE: a scope trips a flag, and SPAWNed work
-;;;; must call CHECK-CANCELLED at points where stopping early is safe. That is
-;;;; a choice, not a missing mechanism -- src/timeout.lisp's WITH-TIMEOUT does
-;;;; forcibly interrupt a running SBCL thread, through a timer and
-;;;; SB-THREAD:INTERRUPT-THREAD, so the capability exists and is deliberately
-;;;; not used here. An asynchronous interrupt lands between two arbitrary
-;;;; instructions, which means it can unwind a task whose UNWIND-PROTECT has
-;;;; not yet recorded the resource its cleanup would release
-;;;; (SB-EXT:WITH-TIMEOUT's own docstring works that hazard through). A scope
-;;;; exists precisely to guarantee that every child it started has finished
-;;;; and been accounted for, and that guarantee is worth more than reclaiming
-;;;; a task a few moments earlier. See src/scope-state.lisp for TASK-SCOPE's
-;;;; own bookkeeping and src/scope-execution.lisp for SPAWN's dispatch.
+;;;; Structured concurrency with cooperative cancellation. Scope bookkeeping
+;;;; lives in scope-state.lisp; task dispatch lives in scope-execution.lisp.
 (in-package #:cl-concurrent-kit)
 
 (defmacro with-task-scope ((scope-var &key timeout) &body body)

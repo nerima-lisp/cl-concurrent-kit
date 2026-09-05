@@ -1,11 +1,8 @@
 ;;;; src/primitives.lisp
 ;;;;
-;;;; The layer bordeaux-threads would occupy in a portable stack: threads,
-;;;; locks, condition variables, semaphores, and atomic counters, each a thin
-;;;; wrapper over SB-THREAD/SB-EXT. Nothing here has implementation-specific
-;;;; behavior beyond what SB-THREAD already documents; the wrapping exists so
-;;;; the rest of this package (and its callers) name one vocabulary instead of
-;;;; reaching into SB-THREAD directly.
+;;;; Low-level wrappers for SB-THREAD/SB-EXT threads, locks, condition
+;;;; variables, semaphores, and atomic counters. Higher layers use this common
+;;;; vocabulary instead of reaching into implementation packages directly.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 ;;; Threads

@@ -1,10 +1,7 @@
 ;;;; src/conditions.lisp
 ;;;;
-;;;; Every condition below is generated through %DEFINE-KIT-CONDITION: a
-;;;; slot's reader name and a :REPORT method's boilerplate lambda used to be
-;;;; hand-written five times, once per condition, and have drifted from each
-;;;; other before (a missing :READER, an inconsistent reader name). The macro
-;;;; makes the convention the only way to spell a condition here at all.
+;;;; Shared condition definitions. %DEFINE-KIT-CONDITION supplies the common
+;;;; slot, reader, and reporting conventions used below.
 (in-package #:cl-concurrent-kit)
 
 (define-condition cl-concurrent-kit-error (error) ()

@@ -1,16 +1,7 @@
 ;;;; src/stream-terminal.lisp
 ;;;;
-;;;; Terminal stream stages: the operators that consume a channel all the way
-;;;; down to a single PROMISE result, rather than producing another channel to
-;;;; read from. Every stage in SRC/STREAM.LISP proper returns two values -- an
-;;;; output channel and a completion promise -- and is meant to be composed
-;;;; into a longer pipeline; every stage here returns one promise and ends the
-;;;; pipeline, because there is nothing downstream left to hand a channel to.
-;;;; They own no output channel and so pass no :OUTPUTS to %WITH-CHANNEL-STAGE.
-;;;;
-;;;; The shared :SCOPE/:EXECUTOR ownership and cancellation contract is
-;;;; SRC/STREAM.LISP's -- see its header comment. These stages reuse that
-;;;; file's %WITH-CHANNEL-STAGE, so SRC/STREAM.LISP must be loaded first.
+;;;; Terminal stream stages consume a channel into one PROMISE result. They
+;;;; reuse %WITH-CHANNEL-STAGE from stream.lisp and own no output channel.
 (in-package #:cl-concurrent-kit)
 
 (defun channel-reduce (function initial-value input &key scope executor)

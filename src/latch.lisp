@@ -1,13 +1,7 @@
 ;;;; src/latch.lisp
 ;;;;
-;;;; COUNTDOWN-LATCH (Java's CountDownLatch) and BARRIER (Java's
-;;;; CyclicBarrier): fixed-party rendezvous primitives built directly on
-;;;; PRIMITIVES, the same layer PROMISE and CHANNEL are built on. Both accept
-;;;; an optional :SCOPE argument -- a TASK-SCOPE, passed explicitly exactly as
-;;;; SPAWN's own SCOPE argument is, never read from a dynamic variable -- so a
-;;;; waiter also unblocks (with TASK-CANCELLED, or, for a barrier,
-;;;; BARRIER-BROKEN) when that scope is cancelled, via SRC/SCOPE-STATE.LISP's
-;;;; generic %SCOPE-ADD-WAKER/%SCOPE-REMOVE-WAKER.
+;;;; COUNTDOWN-LATCH and BARRIER provide fixed-party rendezvous. Both accept
+;;;; an optional TASK-SCOPE and wake waiters when that scope is cancelled.
 (in-package #:cl-concurrent-kit)
 
 ;;; Countdown latches

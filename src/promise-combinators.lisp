@@ -1,18 +1,9 @@
 ;;;; src/promise-combinators.lisp
 ;;;;
-;;;; Deriving a new PROMISE from existing ones -- PROMISE-THEN, PROMISE-CATCH,
-;;;; PROMISE-FINALLY, and PROMISE-ALL-SETTLED -- as opposed to
-;;;; src/promise.lisp's core write-once cell
-;;;; (MAKE-PROMISE/DELIVER/DELIVER-ERROR/AWAIT/CANCEL-PROMISE) and its
-;;;; thread-spawning convenience, FUTURE. Every combinator here mirrors or
-;;;; observes each of its inputs through to completion and never stops
-;;;; watching one early; the combinators that race their inputs and
-;;;; unsubscribe the losers live in src/promise-racing.lisp instead. All four
-;;;; are built purely on %OBSERVE-PROMISE's continuation registration: none of
-;;;; them spawns a thread, queues work, or polls.
-;;;;
-;;;; %CHECK-PROMISES below is shared infrastructure: src/promise-racing.lisp
-;;;; calls it too, and so must be loaded after this file.
+;;;; Promise transformations and all-settled aggregation. These operators
+;;;; observe every input through completion; racing operators live in
+;;;; promise-racing.lisp. They register continuations and do not spawn threads
+;;;; or poll. promise-racing.lisp uses %CHECK-PROMISES from this file.
 (in-package #:cl-concurrent-kit)
 
 (defstruct (promise-settlement

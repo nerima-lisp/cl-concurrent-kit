@@ -1,8 +1,7 @@
 ;;;; src/executor.lisp
 ;;;;
-;;;; A fixed-size worker pool (Java's ExecutorService): SUBMIT hands a thunk
-;;;; to whichever worker is free and returns a PROMISE for it immediately,
-;;;; instead of PROMISE/FUTURE's one-thread-per-task cost.
+;;;; Fixed-size worker pool. SUBMIT queues a thunk and returns a PROMISE
+;;;; immediately; workers execute queued tasks without one thread per task.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defconstant +executor-default-queue-buffer-size+ 64

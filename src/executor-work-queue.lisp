@@ -1,29 +1,8 @@
 ;;;; src/executor-work-queue.lisp
 ;;;;
-;;;; The unbounded blocking task queue behind SRC/EXECUTOR.LISP's SUBMIT.
-;;;;
-;;;; Deliberately not the public CHANNEL: CHANNEL's SEND applies backpressure
-;;;; once a bounded buffer fills, which SUBMIT should not do, and an unbuffered
-;;;; CHANNEL would make SUBMIT block until a worker is free to take it -- also
-;;;; not the contract here. A growable ring buffer avoids per-submission
-;;;; allocation; %WORK-QUEUE-GROW doubles it in place while preserving FIFO
-;;;; order, and the optional :CAPACITY bounds both that growth and the queue
-;;;; itself, so a full bounded queue makes %WORK-QUEUE-PUSH report :FULL rather
-;;;; than block.
-;;;;
-;;;; This file loads BEFORE src/executor.lisp and cannot be reordered:
-;;;; EXECUTOR-SHUTDOWN-P, EXECUTOR-QUEUE-DEPTH, EXECUTOR-HIGH-WATER-MARK and
-;;;; %WORK-QUEUE-CLOSE all expand the %WITH-WORK-QUEUE-LOCK macro defined
-;;;; below, and a macro must already exist when its caller is compiled.
-;;;; Nothing here names anything from src/executor.lisp, so the dependency runs
-;;;; one way only.
-;;;;
-;;;; %WORK-QUEUE-CLOSE stays in src/executor.lisp despite its name: it takes an
-;;;; EXECUTOR rather than a %WORK-QUEUE, and settles the tasks it drains via
-;;;; %EXECUTOR-TASK-CANCEL with an EXECUTOR-SHUT-DOWN condition, so it belongs
-;;;; to the layer that owns those. +EXECUTOR-DEFAULT-QUEUE-BUFFER-SIZE+ stays
-;;;; there for the mirror-image reason -- MAKE-EXECUTOR is its only reader, and
-;;;; the doubling policy below never consults it.
+;;;; Growable FIFO queue behind EXECUTOR. It is separate from CHANNEL because
+;;;; SUBMIT must not apply channel backpressure; bounded queues report :FULL.
+;;;; This file precedes executor.lisp because its lock macro is used there.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (defstruct (%work-queue (:constructor %make-work-queue (capacity buffer)))

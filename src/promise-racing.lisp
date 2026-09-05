@@ -1,27 +1,7 @@
 ;;;; src/promise-racing.lisp
 ;;;;
-;;;; The combinators that race N input promises against each other --
-;;;; PROMISE-RACE, PROMISE-ALL, PROMISE-ANY, and PROMISE-TIMEOUT -- settling
-;;;; the result as soon as the outcome is decided and stopping observation of
-;;;; every input that no longer matters. Contrast SRC/PROMISE-COMBINATORS.LISP,
-;;;; whose remaining operators (PROMISE-THEN, PROMISE-CATCH, PROMISE-FINALLY,
-;;;; PROMISE-ALL-SETTLED) mirror or observe every input through to completion
-;;;; and never stop watching one early. The shared %UNLESS-DECIDED,
-;;;; %DECIDE-ONCE, and %WITH-RACE-CLEANUP below exist purely for that "decide
-;;;; once, then unsubscribe the losers" shape, and every one of their call
-;;;; sites is in this file.
-;;;;
-;;;; Like the operators next door, these are built purely on %OBSERVE-PROMISE's
-;;;; continuation registration: none of them queues work or polls.
-;;;; PROMISE-TIMEOUT is the one exception to spawning no thread -- a delayed
-;;;; action needs a thread somewhere, since this package has no reactor/timer
-;;;; infrastructure to hand it to instead.
-;;;;
-;;;; Load order: AFTER src/promise-combinators.lisp, which defines the
-;;;; %CHECK-PROMISES that PROMISE-RACE, PROMISE-ALL, and PROMISE-ANY each call
-;;;; to validate their input sequence. The dependency runs in that direction
-;;;; only -- nothing in promise-combinators.lisp references anything defined
-;;;; here.
+;;;; Promise combinators that settle on the first decisive result. They share
+;;;; observer registration and cleanup helpers with promise-combinators.lisp.
 (in-package #:cl-concurrent-kit)
 
 (defmacro %unless-decided ((lock decided-place) &body body)

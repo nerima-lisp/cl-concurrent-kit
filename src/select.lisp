@@ -1,11 +1,8 @@
 ;;;; src/select.lisp
 ;;;;
-;;;; Go-style SELECT: wait on several channel operations at once and run
-;;;; whichever becomes ready first. Built on TRY-SEND/TRY-RECV (never
-;;;; blocking, so no clause can hang the others) plus a private semaphore
-;;;; registered as a CHANNEL waiter (src/channel.lisp's %CHANNEL-ADD-WAITER),
-;;;; so a SELECT with nothing ready sleeps instead of busy-polling and wakes
-;;;; as soon as any one of its channels changes state.
+;;;; SELECT waits on several channel operations and runs the first ready one.
+;;;; It probes with nonblocking TRY-SEND/TRY-RECV, then sleeps on a private
+;;;; semaphore registered with each channel instead of busy-polling.
 (progn (in-package #:cl-concurrent-kit) (declaim (optimize (speed 3) (safety 1) (space 1) (debug 0) (compilation-speed 1))))
 
 (eval-when (:compile-toplevel :load-toplevel :execute)

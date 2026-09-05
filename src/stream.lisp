@@ -1,17 +1,9 @@
 ;;;; src/stream.lisp
 ;;;;
-;;;; Stream stages built from CHANNEL: a stage owns its output channel and
-;;;; exposes its worker promise so a caller outside a task scope can observe
-;;;; a transformation failure instead of silently reading from a channel that
-;;;; simply went quiet. Every stage below takes an optional :SCOPE argument,
-;;;; passed explicitly exactly as SPAWN's own SCOPE argument is (never read
-;;;; from a dynamic variable) -- with SCOPE, the stage's worker is a tracked
-;;;; child and observes SCOPE's cancellation cooperatively, the same way
-;;;; CHECK-CANCELLED works anywhere else in this package. Because CHANNEL's
-;;;; own RECV/SEND have no SCOPE argument, a stage already blocked inside one
-;;;; cannot be woken early by cancellation -- it is checked between values,
-;;;; not mid-wait, the same inherent limit as a plain (SLEEP N) inside any
-;;;; other SPAWNed function.
+;;;; Channel stages own an output channel and expose a completion promise.
+;;;; Optional :SCOPE tracks the worker and supplies cooperative cancellation;
+;;;; cancellation is checked between RECV/SEND operations, not while blocked
+;;;; inside one.
 (in-package #:cl-concurrent-kit)
 
 (defun %close-stage-outputs (outputs)

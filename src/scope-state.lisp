@@ -1,12 +1,7 @@
 ;;;; src/scope-state.lisp
 ;;;;
-;;;; TASK-SCOPE's own bookkeeping: the struct, its children, its
-;;;; closing/cancellation flags, and the conditions its failed children
-;;;; signaled. SPAWN (src/scope-execution.lisp) and WITH-TASK-SCOPE
-;;;; (src/scope.lisp) are built entirely on the functions here; splitting the
-;;;; three apart is what lets scope.lisp read as just "the public macro" and
-;;;; scope-execution.lisp as just "dispatch a child" without this underneath
-;;;; either of them.
+;;;; TASK-SCOPE bookkeeping for children, closing, cancellation, and failures.
+;;;; SPAWN and WITH-TASK-SCOPE use these helpers.
 (in-package #:cl-concurrent-kit)
 
 (defstruct (task-scope (:constructor %make-task-scope ()))

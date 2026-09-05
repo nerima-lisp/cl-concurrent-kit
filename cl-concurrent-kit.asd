@@ -29,36 +29,8 @@ injectable clock behind the deadline arithmetic that measures it."
   :depends-on ("cl-boundary-kit" "cl-date-kit")
   :pathname "src"
   :serial t
-  ;; SPEED 0 for THIS system's own files and no one else's.
-  ;;
-  ;; Why the policy exists: SPEED 1 (SBCL's default) is what a bisection
-  ;; originally implicated in a compile that did not return, in SBCL 2.6.0's
-  ;; constraint-propagation pass over src/scope.lisp's SPAWN-CHILD once
-  ;; src/select.lisp, src/executor.lisp and src/scope-state.lisp had all
-  ;; already contributed type information to the same image. This
-  ;; lock-and-condition-variable coordination code is never the bottleneck a
-  ;; caller notices -- the mutex acquisition and OS-level wait it wraps
-  ;; dominate every measurable cost by orders of magnitude -- so keeping the
-  ;; policy costs nothing real even where the compiler would have terminated
-  ;; anyway, and it is retained on that basis.
-  ;;
-  ;; Why it is HERE and not a (DECLAIM (OPTIMIZE ...)) in src/package.lisp,
-  ;; where it used to live: SBCL binds its compilation policy around both
-  ;; COMPILE-FILE and LOAD, so an OPTIMIZE proclamation made by a file is
-  ;; scoped to that file. Measured on SBCL 2.6.0: compile a.lisp containing
-  ;; the declaim, LOAD a.fasl, then compile b.lisp -- b.lisp still compiles at
-  ;; SPEED 1. The declaim therefore covered src/package.lisp and nothing else,
-  ;; leaving the very file it was written for (src/scope.lisp) uncovered.
-  ;; :AROUND-COMPILE is ASDF's per-file compile hook, so it covers every file
-  ;; listed below, whatever order they are built in and whether or not any
-  ;; earlier fasl was cached rather than recompiled.
-  ;;
-  ;; Why WITH-COMPILATION-UNIT's :POLICY and not PROCLAIM: :POLICY is
-  ;; dynamically scoped (SB-EXT:RESTRICT-COMPILER-POLICY's own docstring
-  ;; points at it), so it restores the caller's policy exactly on the way out
-  ;; instead of leaving SPEED 0 proclaimed for everything a consumer compiles
-  ;; after loading this system -- which, since ASDF builds dependencies first,
-  ;; is the consumer's entire source tree.
+  ;; Apply this system's compilation policy per file and restore the caller's
+  ;; policy after compilation. A global DECLAIM would leak into consumers.
   :around-compile (lambda (next)
                     (with-compilation-unit
                         (:policy '(optimize (speed 0) (safety 1) (space 1)
