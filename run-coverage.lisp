@@ -1,48 +1,8 @@
 (progn
   #.(progn (require :asdf) (require :sb-cover) nil)
 
-  ;; `checks.coverage-lcov` (this script) has been observed to report far
-  ;; less than 100% expression coverage -- e.g. 57/921, or 85/2306 -- on a
-  ;; commit that is otherwise unchanged, while `checks.coverage` (SB-COVER's
-  ;; plain in-memory :REPORT, built from the exact same instrumented test
-  ;; run) passes at 100% every time. Two distinct causes have been found so
-  ;; far, and this script now avoids the second:
-  ;;
-  ;; 1. On a small enough source tree, reproduced across multiple fresh,
-  ;;    uncached x86_64-linux builds landing on 100% some runs and on
-  ;;    exactly 57/921 on others, with no code change between them, and a
-  ;;    DIAG build showing CL-CONCURRENT-KIT's sources compiled exactly
-  ;;    once either way (the live coverage-hashtable file count identical
-  ;;    before and after TEST-SYSTEM) -- not a double-compile silently
-  ;;    discarding instrumentation. Only the ENABLE-COVERAGE-LOGGING-
-  ;;    dependent path (this file) was affected, not plain :REPORT, so
-  ;;    suspect ENABLE-COVERAGE-LOGGING's own recording mechanism isn't
-  ;;    safe under the concurrent, many-real-OS-threads execution this
-  ;;    test suite exercises by design -- an upstream SB-COVER limitation.
-  ;;
-  ;; 2. On a larger source tree (confirmed deterministic, not flaky, via a
-  ;;    DIAG build: the exact same 85/2306 result across three independent
-  ;;    fresh builds, local and via `nix build`), every file after
-  ;;    PACKAGE.LISP compiled exactly *twice*. Each top-level
-  ;;    ASDF:LOAD-SYSTEM/ASDF:TEST-SYSTEM call opens its own fresh ASDF
-  ;;    session (ASDF/SESSION:WITH-ASDF-SESSION) unless one is already
-  ;;    active, and a session is what makes ASDF remember "already
-  ;;    performed LOAD-OP on this component" so a later call does not redo
-  ;;    it -- this script used to make three separate top-level calls
-  ;;    (LOAD-SYSTEM, LOAD-SYSTEM, TEST-SYSTEM), so TEST-SYSTEM's own
-  ;;    transitive LOAD-OP on "cl-concurrent-kit" (a dependency of
-  ;;    "cl-concurrent-kit/test") silently recompiled every file a second
-  ;;    time, with STORE-COVERAGE-DATA already dropped back to 0 by then,
-  ;;    discarding their instrumentation without changing which code
-  ;;    actually ran. Fixed below by making a single top-level call.
-  ;;
-  ;; If this check fails and a DIAG build (temporarily wrap COMPILE-FILE,
-  ;; as in the git history of this file, to log every call) shows each
-  ;; source file compiled exactly once, suspect cause 1 and retry before
-  ;; assuming a regression -- a hard 100% gate is unreliable for that
-  ;; reason until upstream addresses thread-safety in coverage logging.
-  ;; If it instead shows a file compiled more than once, that is cause 2
-  ;; (or a new variant of it) recurring, and retrying will not help.
+  ;; Keep coverage in one ASDF test session so each source file is compiled
+  ;; once. The around method below instruments only this system's sources.
 
   (defun script-directory ()
     (make-pathname :name nil
@@ -120,29 +80,8 @@ number."
     ;; output re-reads the file directly and works either way, but
     ;; LCOV-REPORT does not and signals a TYPE-ERROR (NIL is not of type
     ;; VECTOR) without it.
-    ;; A single top-level ASDF:TEST-SYSTEM call below, not the three
-    ;; separate LOAD-SYSTEM/LOAD-SYSTEM/TEST-SYSTEM calls this used to
-    ;; make: each top-level call opens its own fresh ASDF session
-    ;; (ASDF/SESSION:WITH-ASDF-SESSION) unless one is already active, and a
-    ;; session is what makes ASDF remember "already performed LOAD-OP on
-    ;; this component" so a later call does not redo it -- confirmed by a
-    ;; DIAG build: three separate calls, each opening its own session,
-    ;; silently recompiled every file a second time via TEST-SYSTEM's own
-    ;; transitive LOAD-OP on "cl-concurrent-kit" (a dependency of
-    ;; "cl-concurrent-kit/test") -- discarding their coverage
-    ;; instrumentation, once STORE-COVERAGE-DATA had already dropped back
-    ;; to 0, without changing which code actually ran. Sharing one session
-    ;; across explicit LOAD-SYSTEM calls turned out not to help either:
-    ;; ASDF forbids a nested call's :FORCE from disagreeing with the
-    ;; session's first (toplevel) call, in a way that no single :FORCE
-    ;; value passed identically to all three calls actually satisfies.
-    ;; A single call sidesteps the whole problem: every component is
-    ;; visited exactly once by construction, so this :AROUND method is the
-    ;; only mechanism left needed to instrument CL-CONCURRENT-KIT's own
-    ;; files without also instrumenting CL-WEAVE's. Defined -- and, being a
-    ;; DEFMETHOD, compiled -- before ENABLE-COVERAGE-LOGGING turns on
-    ;; coverage's own breakpoint-based instrumentation below, so compiling
-    ;; this method is never itself subject to it.
+    ;; Define the method before coverage logging is enabled so this helper is
+    ;; not instrumented itself.
     (let ((cl-concurrent-kit (asdf:find-system "cl-concurrent-kit")))
       (defmethod asdf:perform :around
           ((operation asdf:compile-op) (component asdf:cl-source-file))

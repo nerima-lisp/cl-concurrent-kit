@@ -1,17 +1,7 @@
 ;;;; benchmarks/run-benchmarks.lisp
 ;;;;
-;;;; Characterizes each primitive's own overhead using cl-weave's BENCHMARK
-;;;; rather than a hand-rolled timing loop, so these numbers stay directly
-;;;; comparable to any other cl-weave-benchmarked SBCL library. Run with:
+;;;; Benchmark the public primitives with cl-weave's BENCHMARK. Run with:
 ;;;;   nix develop -c sbcl --script benchmarks/run-benchmarks.lisp
-;;;;
-;;;; Argument parsing is cl-cli, a dev-tooling-only dependency exactly like
-;;;; cl-weave itself: neither ships in cl-concurrent-kit's own :depends-on,
-;;;; only in flake.nix's CL_SOURCE_REGISTRY for this script and the test
-;;;; system respectively. --ONLY and the SCALE positional replace two
-;;;; previously silent dead arguments -- flake.nix's checks.benchmark passed
-;;;; a positional "1" and apps.benchmark forwarded "$@", neither of which
-;;;; this script used to read at all.
 
 (require :asdf)
 
