@@ -191,9 +191,9 @@
                 ];
                 text = ''
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli}//:${cl-host-kit}//:${
-                    cl-date-kit.packages.${ctx.system}.cl-date-kit
-                  }//"
+                  export CL_SOURCE_REGISTRY="${
+                    cl-weave.packages.${ctx.system}.cl-weave
+                  }//:${cl-cli}//:${cl-host-kit}//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })
