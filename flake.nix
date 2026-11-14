@@ -130,7 +130,7 @@
         let
           pkgs = nixpkgs.legacyPackages.${ctx.system};
         in
-        {
+        nixpkgs.lib.recursiveUpdate {
           # Coverage report and check for this package's own sources.
           packages.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
           checks.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
@@ -160,7 +160,7 @@
 
         }
         # Benchmark tooling currently supports x86_64-linux only.
-        // nixpkgs.lib.optionalAttrs (ctx.system == "x86_64-linux") {
+        (nixpkgs.lib.optionalAttrs (ctx.system == "x86_64-linux") {
           # Benchmark smoke test; SCALE 0.1 keeps the check short.
           checks.benchmark =
             pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
@@ -201,6 +201,6 @@
               })
               + "/bin/cl-concurrent-kit-benchmark";
           };
-        };
+        });
     };
 }
