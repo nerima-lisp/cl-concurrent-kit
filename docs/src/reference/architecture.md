@@ -21,10 +21,39 @@ mutexes, condition variables, semaphores, and atomic counters. Higher-level
 code uses these wrappers instead of depending on implementation-specific
 objects throughout the rest of the system.
 
-`src/timeout.lisp` derives one deadline from a duration and uses it for the
-operation. `WITH-TIMEOUT` additionally interrupts the body when its
-deadline expires. Operations that wait on a condition variable return to the
-caller on timeout so they can signal the package's timeout condition.
+`WITH-INTERRUPTIBLE-SCOPE` gives one invocation on the calling thread its own
+interruption target. A request queues a transfer directly to that scope's
+boundary. The transfer unwinds user cleanup without signaling a condition
+inside the body. Only the boundary signals `OPERATION-INTERRUPTED`, so body
+condition handlers cannot suppress the exit.
+
+Completion and delivery can race. Their observable outcomes are:
+
+| Ordering | Outcome |
+|---|---|
+| Delivery reaches the active body first | Unwind the body, run cleanup, then signal at the boundary. |
+| The body returns before queued delivery | Preserve its return values and deactivate the scope so its queued callback cannot leave the boundary. |
+| A request arrives during scope teardown or after exit | Ignore the request. It cannot affect a later invocation on the same thread. |
+| Several requests reach one active scope | Accept the first reason and ignore later requests. |
+| A signal handler on the target thread requests interruption | Queue delivery until after the handler returns. |
+| An outer scope is interrupted while an inner scope runs | Unwind the inner scope and its cleanup before reaching the outer boundary. |
+
+Teardown drains pending scope callbacks before returning when the caller
+permits interrupts. If the caller
+encloses the entire scope in `WITHOUT-INTERRUPTS`, callbacks can remain pending
+until that enclosing prohibition ends. They then see an inactive scope and
+do nothing, even though the boundary has already exited.
+
+SBCL can also delay delivery during garbage collection. Callers must protect
+resource acquisition and the state needed for cleanup against arbitrary
+asynchronous exits.
+
+`WITH-TIMEOUT` uses this same boundary with a timer requesting interruption.
+It reports `OPERATION-TIMED-OUT` after unwinding. The readers
+`OPERATION-TIMED-OUT-OPERATION` and `OPERATION-TIMED-OUT-TIMEOUT` report the
+operation and timeout in seconds. A timer expiring during scope teardown
+cannot replace a completed result. Other blocking operations enforce their deadline by
+returning from their wait and signaling the package's timeout condition.
 
 ## Promises and executors
 

@@ -45,11 +45,58 @@ deadline as an exact rational.
 | `ATOMIC-COUNTER-VALUE` `(counter)` | Current value. |
 | `ATOMIC-COUNTER-INCF` / `ATOMIC-COUNTER-DECF` `(counter &optional delta)` | Atomic add/subtract. |
 
+## Interruptible scopes
+
+| Symbol | Description |
+|---|---|
+| `WITH-INTERRUPTIBLE-SCOPE` `((scope) &body body)` | Macro: bind `scope` to a fresh interruption target and run `body` on the calling thread. Return the body's values on normal completion. An interruption unwinds the body and signals `OPERATION-INTERRUPTED` at the scope boundary. |
+| `REQUEST-INTERRUPTION` `(scope &key reason)` | Request interruption of this specific scope, with `reason` defaulting to `NIL`. Return `T` for the first accepted request, or `NIL` for a duplicate request or an inactive scope. |
+| `OPERATION-INTERRUPTED-SCOPE` `(condition)` | The opaque scope object named by an `OPERATION-INTERRUPTED` condition. |
+| `OPERATION-INTERRUPTED-REASON` `(condition)` | The first accepted request's reason, defaulting to `NIL`. |
+
+Share the scope object with the thread that requests interruption. The request
+targets that invocation, so a retained object cannot interrupt a later scope
+on the same thread. Handle `OPERATION-INTERRUPTED` outside
+`WITH-INTERRUPTIBLE-SCOPE`.
+
+Acceptance queues delivery; the body can still complete normally before
+that delivery. Once the body has finished, a request during the scope's
+teardown cannot change success
+into interruption. The scope deactivates before returning and drains its
+queued callbacks when the caller permits interrupts.
+Nested scopes have separate targets; interrupting an outer scope unwinds
+through any inner scopes and their cleanup.
+
+A request on the target thread is queued too. If a signal handler requests
+interruption, delivery follows the handler's return.
+
+Interruption transfers control directly to the boundary. The body's
+`HANDLER-CASE`, `HANDLER-BIND`, and `IGNORE-ERRORS` cannot intercept it;
+`UNWIND-PROTECT` cleanup still runs. The boundary signals the condition after
+unwinding.
+
+SBCL can defer delivery during `WITHOUT-INTERRUPTS` and garbage collection.
+If an enclosing `WITHOUT-INTERRUPTS` prohibits interrupts throughout the
+scope, queued callbacks can remain pending after the scope returns. They run
+when the caller permits interrupts again, see the inactive scope, and do
+nothing. The scope does not override the caller's interrupt prohibition.
+
+An asynchronous exit can occur between resource acquisition and recording
+the state needed for cleanup. Protect those operations together with
+`WITHOUT-INTERRUPTS`, or use cooperative task-scope cancellation when the
+body cannot safely unwind at an arbitrary point.
+
 ## Preemptive timeouts
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#threading-primitives). |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry the body unwinds to the interruption boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
+
+The body cannot suppress this timeout with condition handlers. Once the body
+has completed, expiry during the scope's teardown cannot replace its return
+values with a timeout. `WITH-TIMEOUT` uses the same interruption mechanism,
+including its caller-controlled delivery and draining, and has the same
+asynchronous-exit limitations as `WITH-INTERRUPTIBLE-SCOPE`.
 
 Note the shape of `duration`: it is a bare form, as in `sb-ext:with-timeout`,
 not a one-element list as in `bordeaux-threads:with-timeout`. Write
@@ -189,6 +236,7 @@ contract (output ownership, closing, and completion promises).
 | Symbol | Base | Description |
 |---|---|---|
 | `CL-CONCURRENT-KIT-ERROR` | `ERROR` | Base condition for the whole library. |
+| `OPERATION-INTERRUPTED` | `CL-CONCURRENT-KIT-ERROR` | An interruptible body was interrupted. Readers: `OPERATION-INTERRUPTED-SCOPE` for the target scope, and `OPERATION-INTERRUPTED-REASON` for the supplied reason. Signaled at the scope boundary after body cleanup. |
 | `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, scope cleanup, or a `WITH-TIMEOUT` body, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
 | `PROMISE-ALREADY-FULFILLED` | `CL-CONCURRENT-KIT-ERROR` | `DELIVER`/`DELIVER-ERROR`/`CANCEL-PROMISE` called on an already-settled promise. Reader: `PROMISE-ALREADY-FULFILLED-PROMISE`. |
 | `CHANNEL-CLOSED` | `CL-CONCURRENT-KIT-ERROR` | `SEND`/`TRY-SEND` after close. Reader: `CHANNEL-CLOSED-CHANNEL`. |

@@ -8,8 +8,8 @@ An SBCL-only concurrency toolkit, built directly on `sb-thread`. It provides
 wrappers for threads, locks, condition variables, and semaphores, then builds
 promises/futures with `.then()`-style combinators, CSP channels with `select`, a fixed-size
 executor with bounded queues and observability, structured-concurrency
-scopes with cooperative cancellation, a preemptive `WITH-TIMEOUT` for
-bounding an arbitrary body, countdown latches and cyclic barriers, and a
+scopes with cooperative cancellation, interruptible scopes and a preemptive
+`WITH-TIMEOUT` for bounding an arbitrary body, countdown latches and cyclic barriers, and a
 reactive stream layer of `CHANNEL-*` operators (map/filter/merge/zip and the
 rest) built on top of channels. Every `:TIMEOUT` argument accepts a
 [`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit); the
