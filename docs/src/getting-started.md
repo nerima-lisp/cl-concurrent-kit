@@ -5,13 +5,13 @@
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.1";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.7.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```
 
-Or, from a plain ASDF setup, clone the repository (and its `cl-boundary-kit`/
-`cl-date-kit` dependencies) somewhere on your `CL_SOURCE_REGISTRY` and:
+Or, from a plain ASDF setup, clone the repository and its `cl-date-kit`
+dependency somewhere on your `CL_SOURCE_REGISTRY` and:
 
 ```lisp
 (asdf:load-system "cl-concurrent-kit")

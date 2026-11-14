@@ -202,3 +202,19 @@
       (atomic-counter-incf counter 3)
       (atomic-counter-decf counter 2)
       (expect (atomic-counter-value counter) :to-be 1))))
+
+(describe-concurrent
+  "deadline clock"
+  (it
+    "uses an advancing closure and internal-time units"
+    (let ((now 100))
+      (let ((*clock* (lambda () now)))
+        (let ((deadline (cl-concurrent-kit::%deadline-from-timeout 2)))
+          (expect deadline :to-be
+                  (+ 100 (* 2 internal-time-units-per-second)))
+          (incf now internal-time-units-per-second)
+          (expect (cl-concurrent-kit::%seconds-until-deadline deadline)
+                  :to-be 1.0d0)
+          (incf now (* 2 internal-time-units-per-second))
+          (expect (cl-concurrent-kit::%seconds-until-deadline deadline)
+                  :to-be 0.0d0))))))

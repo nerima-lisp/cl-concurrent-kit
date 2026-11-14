@@ -3,13 +3,16 @@
 ## Platform and dependencies
 
 The library targets SBCL and wraps `sb-thread` through the small interface in
-`src/primitives.lisp`. It depends on CL-BOUNDARY-KIT for monotonic clocks and
-CL-DATE-KIT for duration values. Public timeout arguments use
-`CL-DATE-KIT:DURATION`; callers can construct one with
+`src/primitives.lisp`. It depends on CL-DATE-KIT for duration values. Public
+timeout arguments use `CL-DATE-KIT:DURATION`; callers can construct one with
 `CL-DATE-KIT:DURATION-OF-SECONDS`, `-MILLIS`, `-MICROS`, or `-NANOS`.
 
-The special variable `*CLOCK*` contains the clock used for deadline
-arithmetic. Tests can bind it to a fake clock from CL-BOUNDARY-KIT.
+Since v0.7.0, the special variable `*CLOCK*` is a zero-argument function that
+returns internal-time units. Its default is `GET-INTERNAL-REAL-TIME`. Its
+monotonicity depends on SBCL and the platform; macOS SBCL 2.6.8 uses
+`GETTIMEOFDAY` and is not monotonic, so wall-clock adjustments can make
+deadline-based timeouts expire earlier or later than requested. Tests can bind
+a closure and advance its returned value to exercise deadline arithmetic.
 
 ## Threading primitives
 
@@ -18,8 +21,8 @@ mutexes, condition variables, semaphores, and atomic counters. Higher-level
 code uses these wrappers instead of depending on implementation-specific
 objects throughout the rest of the system.
 
-`src/timeout.lisp` derives one monotonic deadline from a duration and uses it
-for the operation. `WITH-TIMEOUT` additionally interrupts the body when its
+`src/timeout.lisp` derives one deadline from a duration and uses it for the
+operation. `WITH-TIMEOUT` additionally interrupts the body when its
 deadline expires. Operations that wait on a condition variable return to the
 caller on timeout so they can signal the package's timeout condition.
 
@@ -109,5 +112,5 @@ private helpers defined by earlier files. The source is grouped by layer:
 
 The system's ASDF `:around-compile` hook applies the package's compilation
 policy to its own files and restores the caller's policy afterward. It is kept
-at the system boundary so loading this library does not alter compilation of
+at the system interface so loading this library does not alter compilation of
 dependent systems.

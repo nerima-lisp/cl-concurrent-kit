@@ -13,8 +13,11 @@ bounding an arbitrary body, countdown latches and cyclic barriers, and a
 reactive stream layer of `CHANNEL-*` operators (map/filter/merge/zip and the
 rest) built on top of channels. Every `:TIMEOUT` argument accepts a
 [`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit); the
-deadline arithmetic behind it is driven by an injectable
-[`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) clock.
+deadline source is the injectable `*clock*` function, defaulting to
+`get-internal-real-time`. Since v0.7.0, `*clock*` is a zero-argument function.
+Its monotonicity depends on SBCL and the platform; macOS SBCL 2.6.8 uses
+`gettimeofday` and is not monotonic. Wall-clock adjustments on that platform
+can make deadline-based timeouts expire earlier or later than requested.
 
 Full documentation is published at <https://nerima-lisp.github.io/cl-concurrent-kit/>.
 The source for that site lives in [docs/src/](docs/src/).
@@ -41,7 +44,7 @@ The source for that site lives in [docs/src/](docs/src/).
 ```nix
 # flake.nix
 inputs.cl-concurrent-kit = {
-  url = "github:nerima-lisp/cl-concurrent-kit/v0.6.1";
+  url = "github:nerima-lisp/cl-concurrent-kit/v0.7.0";
   inputs.nixpkgs.follows = "nixpkgs";
 };
 ```

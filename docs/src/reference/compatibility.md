@@ -2,12 +2,12 @@
 
 ## Implementation and dependencies
 
-The library targets SBCL and is tested with SBCL 2.6.0. Runtime dependencies
-are [cl-boundary-kit](https://github.com/nerima-lisp/cl-boundary-kit) and
-[cl-date-kit](https://github.com/nerima-lisp/cl-date-kit). The test system
+The library targets SBCL. Its Nix CI uses SBCL 2.6.6; the macOS clock caveat in
+[Architecture](architecture.md) describes SBCL 2.6.8 specifically. Its runtime
+dependency is [cl-date-kit](https://github.com/nerima-lisp/cl-date-kit). The test system
 additionally uses [cl-weave](https://github.com/nerima-lisp/cl-weave).
-Benchmark scripts also use
-[cl-cli](https://github.com/nerima-lisp/cl-cli).
+Benchmark scripts use [cl-cli](https://github.com/nerima-lisp/cl-cli), which
+uses [cl-host-kit](https://github.com/nerima-lisp/cl-host-kit) on SBCL.
 
 The implementation uses SBCL's native thread and synchronization facilities
 in `src/primitives.lisp`. Porting to another Common Lisp implementation

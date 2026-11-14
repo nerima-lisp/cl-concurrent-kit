@@ -1,5 +1,5 @@
 {
-  description = "SBCL-only concurrency toolkit built directly on sb-thread, using CL-DATE-KIT durations and CL-BOUNDARY-KIT clock injection for deadline arithmetic";
+  description = "SBCL-only concurrency toolkit built directly on sb-thread, using CL-DATE-KIT durations and an injectable SBCL clock for deadline arithmetic";
 
   inputs = {
     # nixos-unstable, not nixpkgs-unstable: it advances only after the NixOS
@@ -23,15 +23,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Runtime dependencies for the injectable clock and DURATION timeout type.
-    cl-boundary-kit = {
-      url = "github:nerima-lisp/cl-boundary-kit/v2.3.0";
-      inputs.nixpkgs.follows = "nixpkgs";
-      inputs.cl-weave.follows = "cl-weave";
-      inputs.cl-nix-forge.follows = "cl-nix-forge";
-      inputs.treefmt-nix.follows = "treefmt-nix";
-    };
-
     cl-date-kit = {
       url = "github:nerima-lisp/cl-date-kit/v1.0.0";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -44,21 +35,16 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Benchmark-only dependency, loaded through benchmarkScript's registry.
+    # Benchmark-only source dependency, loaded from its ASDF system by the runner.
     cl-cli = {
       url = "github:nerima-lisp/cl-cli/v1.2.0";
-      inputs.nixpkgs.follows = "nixpkgs";
-      # Reuse the top-level flake input to avoid a duplicate transitive pin.
-      inputs.cl-nix-forge.follows = "cl-nix-forge";
+      flake = false;
     };
 
-    # Transitive dependency needed by cl-cli and cl-boundary-kit.
+    # Benchmark-only source dependency required by cl-cli's SBCL host integration.
     cl-host-kit = {
       url = "github:nerima-lisp/cl-host-kit/v0.3.1";
-      inputs.nixpkgs.follows = "nixpkgs";
-      # Reuse the top-level versions for transitive dependencies.
-      inputs.cl-weave.follows = "cl-weave";
-      inputs.cl-nix-forge.follows = "cl-nix-forge";
+      flake = false;
     };
   };
 
@@ -68,7 +54,6 @@
       nixpkgs,
       cl-nix-forge,
       cl-weave,
-      cl-boundary-kit,
       cl-date-kit,
       treefmt-nix,
       cl-cli,
@@ -109,7 +94,7 @@
       };
 
       meta = {
-        description = "SBCL-only concurrency toolkit built directly on sb-thread, using CL-DATE-KIT durations and CL-BOUNDARY-KIT clock injection for deadline arithmetic";
+        description = "SBCL-only concurrency toolkit built directly on sb-thread, using CL-DATE-KIT durations and an injectable SBCL clock for deadline arithmetic";
         homepage = "https://github.com/nerima-lisp/cl-concurrent-kit";
         license = nixpkgs.lib.licenses.mit;
       };
@@ -127,7 +112,6 @@
 
       # Runtime dependencies from cl-concurrent-kit.asd.
       lispDependencies = ctx: [
-        cl-boundary-kit.packages.${ctx.system}.cl-boundary-kit
         cl-date-kit.packages.${ctx.system}.cl-date-kit
       ];
 
@@ -159,21 +143,9 @@
                   pkgs.perl
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-                # run-coverage.lisp runs cl-concurrent-kit/test (ASDF:TEST-SYSTEM),
-                # which loads cl-concurrent-kit itself -- so this needs its own
-                # main-system dependencies (cl-boundary-kit, cl-date-kit) on the
-                # registry in addition to cl-weave, same requirement as
-                # checks.benchmark/apps.benchmark below. cl-host-kit is
-                # cl-boundary-kit's OWN ASDF dependency (its real-boundary
-                # backend), not cl-concurrent-kit's -- ASDF still resolves
-                # cl-boundary-kit's full :depends-on chain even when loading
-                # it as a prebuilt package, so cl-host-kit must be reachable
-                # here too, exactly as checks.benchmark already needs it for
-                # cl-cli's own cl-host-kit dependency.
+                # The test system adds cl-weave to the library's runtime dependency.
                 CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
-                  cl-boundary-kit.packages.${ctx.system}.cl-boundary-kit
-                }//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//:${
-                  cl-host-kit.packages.${ctx.system}.cl-host-kit
+                  cl-date-kit.packages.${ctx.system}.cl-date-kit
                 }//";
               }
               ''
@@ -197,11 +169,9 @@
                 ];
                 CL_CONCURRENT_KIT_SOURCE_ROOT = self;
                 # The benchmark script loads these systems directly.
-                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
-                  cl-cli.packages.${ctx.system}.cl-cli
-                }//:${cl-host-kit.packages.${ctx.system}.cl-host-kit}//:${
-                  cl-boundary-kit.packages.${ctx.system}.cl-boundary-kit
-                }//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//";
+                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli}//:${cl-host-kit}//:${
+                  cl-date-kit.packages.${ctx.system}.cl-date-kit
+                }//";
               }
               ''
                 export HOME="$TMPDIR/home"
@@ -221,11 +191,9 @@
                 ];
                 text = ''
                   export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${
-                    cl-cli.packages.${ctx.system}.cl-cli
-                  }//:${cl-host-kit.packages.${ctx.system}.cl-host-kit}//:${
-                    cl-boundary-kit.packages.${ctx.system}.cl-boundary-kit
-                  }//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//"
+                  export CL_SOURCE_REGISTRY="${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli}//:${cl-host-kit}//:${
+                    cl-date-kit.packages.${ctx.system}.cl-date-kit
+                  }//"
                   exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
                 '';
               })

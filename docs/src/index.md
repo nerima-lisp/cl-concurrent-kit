@@ -8,9 +8,9 @@ targets SBCL and wraps `sb-thread` directly, providing promises, channels,
 executors, scopes, and streams in one library.
 Every `:TIMEOUT` argument across that surface accepts a
 [`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit), with
-  [`cl-boundary-kit`](https://github.com/nerima-lisp/cl-boundary-kit) supplying
-  the injectable clock used for deadline arithmetic. See
-  [Architecture](reference/architecture.md) for the integration details.
+deadline arithmetic driven by an injectable `*clock*` function that defaults
+to SBCL's `get-internal-real-time`. See
+[Architecture](reference/architecture.md) for its units and platform behavior.
 
 ## Layers
 

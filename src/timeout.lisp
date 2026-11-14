@@ -37,7 +37,7 @@
                          ;; deadline has actually been reached. Anything earlier
                          ;; belongs to a timeout the body established, and
                          ;; declining lets it keep propagating to whoever did.
-                         (when (>= (cl-boundary-kit:clock-monotonic *clock*) deadline)
+                         (when (>= (funcall *clock*) deadline)
                            (setf expired-p t)
                            (return-from attempt (values))))))
                   (sb-ext:with-timeout seconds (funcall thunk))))
