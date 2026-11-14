@@ -80,6 +80,7 @@ the internal-time values used by deadline arithmetic."
    (:file "conditions-test")
    (:file "primitives-test")
    (:file "timeout-test")
+   (:file "interruptible-test")
    (:file "promise-test")
    (:file "channel-test")
    (:file "select-test")
