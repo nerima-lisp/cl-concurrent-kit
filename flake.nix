@@ -109,6 +109,8 @@
       pname = "cl-concurrent-kit";
       asd = ./cl-concurrent-kit.asd;
       root = ./.;
+      # The test suite checks public exports against this reference.
+      sourceInclude = [ ./docs/src/reference/api.md ];
 
       # Runtime dependencies from cl-concurrent-kit.asd.
       lispDependencies = ctx: [
