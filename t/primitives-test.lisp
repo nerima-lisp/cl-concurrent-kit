@@ -208,7 +208,7 @@
   (it
     "uses an advancing closure and internal-time units"
     (let ((now 100))
-      (let ((*clock* (lambda () now)))
+      (let ((cl-concurrent-kit:*clock* (lambda () now)))
         (let ((deadline (cl-concurrent-kit::%deadline-from-timeout 2)))
           (expect deadline :to-be
                   (+ 100 (* 2 internal-time-units-per-second)))
