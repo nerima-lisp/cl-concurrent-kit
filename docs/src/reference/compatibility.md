@@ -2,9 +2,13 @@
 
 ## Implementation and dependencies
 
-The library targets SBCL. Its Nix CI uses SBCL 2.6.6; the macOS clock caveat in
-[Architecture](architecture.md) describes SBCL 2.6.8 specifically. Its runtime
-dependency is [cl-date-kit](https://github.com/nerima-lisp/cl-date-kit). The test system
+The library targets SBCL. Its Nix CI uses SBCL 2.6.6. Since v0.7.0,
+`*clock*` is a zero-argument function defaulting to `get-internal-real-time`;
+its monotonicity depends on the SBCL build. When
+`:os-provides-clock-gettime` is present in `sb-impl:+internal-features+`,
+SBCL uses `CLOCK_MONOTONIC` on macOS and `CLOCK_MONOTONIC_COARSE` on Linux.
+The runtime dependency is [cl-date-kit](https://github.com/nerima-lisp/cl-date-kit).
+The test system
 additionally uses [cl-weave](https://github.com/nerima-lisp/cl-weave).
 Benchmark scripts use [cl-cli](https://github.com/nerima-lisp/cl-cli), which
 uses [cl-host-kit](https://github.com/nerima-lisp/cl-host-kit) on SBCL.

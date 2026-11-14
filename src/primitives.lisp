@@ -121,9 +121,10 @@ WAIT-ON-SEMAPHORE."
 (defvar *clock* (function get-internal-real-time)
   "The zero-argument function used by deadline arithmetic. Since v0.7.0,
 *CLOCK* is a function whose default is GET-INTERNAL-REAL-TIME and whose values
-use INTERNAL-TIME-UNITS. Monotonicity depends on SBCL and the platform; macOS
-SBCL 2.6.8 uses GETTIMEOFDAY and is not monotonic. Tests can bind a closure
-that advances the returned value. Real blocking waits -- CONDITION-WAIT,
+use INTERNAL-TIME-UNITS. Monotonicity depends on the SBCL build: when
+:OS-PROVIDES-CLOCK-GETTIME is present in SB-IMPL:+INTERNAL-FEATURES+, SBCL uses
+CLOCK_MONOTONIC on macOS and CLOCK_MONOTONIC_COARSE on Linux. Tests can bind a
+closure that advances the returned value. Real blocking waits -- CONDITION-WAIT,
 WAIT-ON-SEMAPHORE, SB-EXT:WITH-TIMEOUT -- do not consult this variable and
 cannot be sped up by advancing a bound clock; only deadline arithmetic uses
 it.")

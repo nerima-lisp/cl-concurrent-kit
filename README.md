@@ -13,11 +13,11 @@ bounding an arbitrary body, countdown latches and cyclic barriers, and a
 reactive stream layer of `CHANNEL-*` operators (map/filter/merge/zip and the
 rest) built on top of channels. Every `:TIMEOUT` argument accepts a
 [`cl-date-kit:duration`](https://github.com/nerima-lisp/cl-date-kit); the
-deadline source is the injectable `*clock*` function, defaulting to
-`get-internal-real-time`. Since v0.7.0, `*clock*` is a zero-argument function.
-Its monotonicity depends on SBCL and the platform; macOS SBCL 2.6.8 uses
-`gettimeofday` and is not monotonic. Wall-clock adjustments on that platform
-can make deadline-based timeouts expire earlier or later than requested.
+deadline source is the injectable `*clock*` function. Since v0.7.0, it is a
+zero-argument function defaulting to `get-internal-real-time`. Its monotonicity
+depends on the SBCL build: when `:os-provides-clock-gettime` is present in
+`sb-impl:+internal-features+`, SBCL uses `CLOCK_MONOTONIC` on macOS and
+`CLOCK_MONOTONIC_COARSE` on Linux.
 
 Full documentation is published at <https://nerima-lisp.github.io/cl-concurrent-kit/>.
 The source for that site lives in [docs/src/](docs/src/).

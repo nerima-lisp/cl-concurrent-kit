@@ -9,10 +9,10 @@ timeout arguments use `CL-DATE-KIT:DURATION`; callers can construct one with
 
 Since v0.7.0, the special variable `*CLOCK*` is a zero-argument function that
 returns internal-time units. Its default is `GET-INTERNAL-REAL-TIME`. Its
-monotonicity depends on SBCL and the platform; macOS SBCL 2.6.8 uses
-`GETTIMEOFDAY` and is not monotonic, so wall-clock adjustments can make
-deadline-based timeouts expire earlier or later than requested. Tests can bind
-a closure and advance its returned value to exercise deadline arithmetic.
+monotonicity depends on the SBCL build: when `:OS-PROVIDES-CLOCK-GETTIME` is
+present in `SB-IMPL:+INTERNAL-FEATURES+`, SBCL uses `CLOCK_MONOTONIC` on macOS
+and `CLOCK_MONOTONIC_COARSE` on Linux. Tests can bind a closure and advance its
+returned value to exercise deadline arithmetic.
 
 ## Threading primitives
 
@@ -112,5 +112,5 @@ private helpers defined by earlier files. The source is grouped by layer:
 
 The system's ASDF `:around-compile` hook applies the package's compilation
 policy to its own files and restores the caller's policy afterward. It is kept
-at the system interface so loading this library does not alter compilation of
+at the system boundary so loading this library does not alter compilation of
 dependent systems.
