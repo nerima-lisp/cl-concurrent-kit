@@ -5,6 +5,22 @@
   (handler-case (progn (funcall thunk) nil)
     (cl-concurrent-kit::operation-interrupted (condition) condition)))
 
+(defmacro with-interruption-worker ((thread thunk) &body checks)
+  `(let ((,thread (make-thread
+                    (lambda ()
+                      (handler-case (funcall ,thunk)
+                        (serious-condition (condition) condition))))))
+     (unwind-protect (progn ,@checks)
+       ;; A failed assertion must not leave a computing or cleanup worker alive.
+       ;; The worker can finish between THREAD-ALIVE-P and TERMINATE-THREAD.
+       (handler-case
+           (when (thread-alive-p ,thread) (sb-thread:terminate-thread ,thread))
+         (sb-thread:interrupt-thread-error () nil))
+       (join-thread ,thread :timeout 2 :default nil)
+       (expect (thread-alive-p ,thread) :to-be nil))))
+
+
+
 (describe-concurrent "interruptible scopes"
   (it "exports and documents each new public binding"
     (let ((reference (uiop:read-file-string
@@ -40,9 +56,7 @@
 
   (it "interrupts ignore-errors without notifying body handlers and runs cleanup"
     (let ((ready (make-semaphore)) saved cleaned body-notified)
-      (let ((thread
-              (make-thread
-               (lambda ()
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
@@ -54,8 +68,7 @@
                             (progn
                               (signal-semaphore ready)
                               (loop (ignore-errors (sleep 0.1))))
-                          (setf cleaned t))))))))))
-        (wait-or-fail ready "interruptible body did not start")
+                          (setf cleaned t)))))))) (wait-or-fail ready "interruptible body did not start")
         (expect (cl-concurrent-kit::request-interruption saved :reason :keyboard)
                 :to-be t)
         (let ((condition (join-thread thread :timeout 2)))
@@ -68,46 +81,38 @@
 
   (it "interrupts a computing body despite an ERROR handler-case"
     (let ((ready (make-semaphore)) saved)
-      (let ((thread
-              (make-thread
-               (lambda ()
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
                       (setf saved scope)
                       (signal-semaphore ready)
-                      (handler-case (loop) (error () :swallowed)))))))))
-        (wait-or-fail ready "computing body did not start")
+                      (handler-case (loop) (error () :swallowed))))))) (wait-or-fail ready "computing body did not start")
         (cl-concurrent-kit::request-interruption saved)
         (let ((condition (join-thread thread :timeout 2)))
           (expect condition :to-be-truthy)
           (expect (cl-concurrent-kit::operation-interrupted-reason condition) :to-be nil)))))
 
-  (it "delivers a target-thread handler request after that handler returns"
-    (let ((ready (make-semaphore)) saved handler-returned)
-      (let ((thread
-              (make-thread
-               (lambda ()
+  (it "uses a target-thread handler request as its last action"
+    (let ((ready (make-semaphore)) saved handler-entered)
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
                       (setf saved scope)
                       (signal-semaphore ready)
-                      (loop (sleep 0.1)))))))))
-        (wait-or-fail ready "handler target did not start")
+                      (loop (sleep 0.1))))))) (wait-or-fail ready "handler target did not start")
         (sb-thread:interrupt-thread
          thread (lambda ()
-                  (cl-concurrent-kit::request-interruption saved :reason :signal)
-                  (setf handler-returned t)))
+                  (setf handler-entered t)
+                  (cl-concurrent-kit::request-interruption saved :reason :signal)))
         (let ((condition (join-thread thread :timeout 2)))
-          (expect handler-returned :to-be t)
+          (expect handler-entered :to-be t)
           (expect (cl-concurrent-kit::operation-interrupted-reason condition) :to-be :signal)))))
 
   (it "keeps the first reason and defers delivery across WITHOUT-INTERRUPTS"
     (let ((ready (make-semaphore)) (release (make-semaphore)) saved first second)
-      (let ((thread
-              (make-thread
-               (lambda ()
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
@@ -115,8 +120,7 @@
                       (sb-sys:without-interrupts
                         (signal-semaphore ready)
                         (wait-or-fail release "protected body was not released"))
-                      (loop (sleep 0.1)))))))))
-        (wait-or-fail ready "protected body did not start")
+                      (loop (sleep 0.1))))))) (wait-or-fail ready "protected body did not start")
         (setf first (cl-concurrent-kit::request-interruption saved :reason :first)
               second (cl-concurrent-kit::request-interruption saved :reason :second))
         (signal-semaphore release)
@@ -143,9 +147,7 @@
   (it "does not reinterrupt cleanup after a request has started unwinding"
     (let ((ready (make-semaphore)) (cleaning (make-semaphore))
           (release (make-semaphore)) saved cleaned)
-      (let ((thread
-              (make-thread
-               (lambda ()
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
@@ -154,8 +156,7 @@
                           (progn (signal-semaphore ready) (loop (sleep 0.1)))
                         (signal-semaphore cleaning)
                         (wait-or-fail release "cleanup was not released")
-                        (setf cleaned t)))))))))
-        (wait-or-fail ready "cleanup target did not start")
+                        (setf cleaned t))))))) (wait-or-fail ready "cleanup target did not start")
         (cl-concurrent-kit::request-interruption saved :reason :first)
         (wait-or-fail cleaning "cleanup did not start")
         (expect (cl-concurrent-kit::request-interruption saved :reason :second) :to-be nil)
@@ -166,9 +167,7 @@
 
   (it "unwinds an inner scope when the outer scope is interrupted"
     (let ((ready (make-semaphore)) outer inner cleaned)
-      (let ((thread
-              (make-thread
-               (lambda ()
+      (with-interruption-worker (thread (lambda ()
                  (interruption-condition-of
                   (lambda ()
                     (cl-concurrent-kit::with-interruptible-scope (scope)
@@ -177,8 +176,7 @@
                         (setf inner nested)
                         (unwind-protect
                             (progn (signal-semaphore ready) (loop (sleep 0.1)))
-                          (setf cleaned t))))))))))
-        (wait-or-fail ready "nested scope did not start")
+                          (setf cleaned t)))))))) (wait-or-fail ready "nested scope did not start")
         (cl-concurrent-kit::request-interruption outer :reason :outer)
         (expect (cl-concurrent-kit::operation-interrupted-scope
                  (join-thread thread :timeout 2)) :to-be outer)
@@ -186,17 +184,19 @@
         (expect (cl-concurrent-kit::request-interruption inner) :to-be nil))))
 
   (it "keeps nested scopes independent when only the inner is interrupted"
-    (expect
-     (cl-concurrent-kit::with-interruptible-scope (outer)
-       (declare (ignore outer))
-       (let ((condition
-               (interruption-condition-of
-                (lambda ()
-                  (cl-concurrent-kit::with-interruptible-scope (inner)
-                    (cl-concurrent-kit::request-interruption inner :reason :inner)
-                    (loop (sleep 0.1)))))))
-         (cl-concurrent-kit::operation-interrupted-reason condition)))
-     :to-be :inner)))
+    (with-interruption-worker
+        (thread
+         (lambda ()
+           (cl-concurrent-kit:with-interruptible-scope (outer)
+             (declare (ignore outer))
+             (let ((condition
+                     (interruption-condition-of
+                      (lambda ()
+                        (cl-concurrent-kit:with-interruptible-scope (inner)
+                          (cl-concurrent-kit:request-interruption inner :reason :inner)
+                          (loop (sleep 0.1)))))))
+               (cl-concurrent-kit:operation-interrupted-reason condition)))))
+      (expect (join-thread thread :timeout 2) :to-be :inner))))
 
 (describe-concurrent "WITH-TIMEOUT interruptible boundary"
   (it "preserves an outer interruption delivered before the timeout body starts"
@@ -231,17 +231,240 @@
       (expect (cl-concurrent-kit::request-interruption saved) :to-be nil)))
 
 
-  (it "cannot be swallowed by ignore-errors and runs cleanup"
-    (let (cleaned)
-      (signals operation-timed-out
-        (with-timeout +test-timeout-expiry+
-          (unwind-protect (loop (ignore-errors (sleep 0.1)))
-            (setf cleaned t))))
-      (expect cleaned :to-be t)))
+  (it "cannot notify a serious-condition handler in the body and runs cleanup"
+    (let ((observed 0) cleaned)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (handler-case
+                 (with-timeout +test-timeout-expiry+
+                   (handler-bind ((serious-condition
+                                    (lambda (condition)
+                                      (declare (ignore condition))
+                                      (incf observed))))
+                     (unwind-protect (loop (ignore-errors (sleep 0.1)))
+                       (setf cleaned t))))
+               (operation-timed-out (condition) condition))))
+        (let ((condition (join-thread thread :timeout 2)))
+          (expect (typep condition 'operation-timed-out) :to-be t))
+        (expect observed :to-be 0)
+        (expect cleaned :to-be t))))
 
   (it "delivers an expired deadline when a protected body reenables interrupts"
-    (signals operation-timed-out
-      (with-timeout +test-timeout-expiry+
-        (sb-sys:without-interrupts (sleep 0.1))
-        (loop (sleep 0.1))))
+    (with-interruption-worker
+        (thread (lambda ()
+                  (timeout-condition-of
+                   (lambda ()
+                     (with-timeout +test-timeout-expiry+
+                       (sb-sys:without-interrupts (sleep 0.1))
+                       (loop (sleep 0.1)))))))
+      (expect (typep (join-thread thread :timeout 2) 'operation-timed-out) :to-be t))
     (expect (with-timeout (cl-date-kit:duration-of-seconds 5) (+ 20 22)) :to-be 42)))
+
+(describe-concurrent "forced interruption requests"
+  (it "ignores a NIL scope with either request mode"
+    (expect (cl-concurrent-kit:request-interruption nil) :to-be nil)
+    (expect (cl-concurrent-kit:request-interruption nil :reason :absent :force t) :to-be nil))
+
+  (it "ignores forced requests after a normal boundary has closed"
+    (let (saved)
+      (expect (cl-concurrent-kit:with-interruptible-scope (scope)
+                (setf saved scope)
+                :completed)
+              :to-be :completed)
+      (expect (cl-concurrent-kit:request-interruption saved :reason :late :force t) :to-be nil)
+      (expect (cl-concurrent-kit:with-interruptible-scope (scope)
+                (declare (ignore scope)) (+ 20 22)) :to-be 42)))
+
+  (it "rejects forced requests during the boundary's own cleanup"
+    (let (saved accepted)
+      (expect
+       (cl-concurrent-kit::%call-with-interruptible-scope
+        (lambda (scope) (setf saved scope) :completed)
+        (lambda (scope reason)
+          (declare (ignore scope reason))
+          (error "A closed boundary accepted an interruption"))
+        (lambda ()
+          (setf accepted
+                (cl-concurrent-kit:request-interruption saved :reason :late :force t))))
+       :to-be :completed)
+      (expect accepted :to-be nil)))
+
+  (it "reaches a live boundary while the first interruption is blocked in cleanup"
+    (let ((ready (make-semaphore)) (cleaning (make-semaphore))
+          (release (make-semaphore)) saved cleanup-finished)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (interruption-condition-of
+              (lambda ()
+                (cl-concurrent-kit:with-interruptible-scope (scope)
+                  (setf saved scope)
+                  (unwind-protect
+                      (progn (signal-semaphore ready) (loop (sleep 0.1)))
+                    (signal-semaphore cleaning)
+                    (wait-on-semaphore release)
+                    (setf cleanup-finished t)))))))
+        (unwind-protect
+             (progn
+               (wait-or-fail ready "force target did not start")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :first) :to-be t)
+               (wait-or-fail cleaning "force target did not enter cleanup")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :ordinary) :to-be nil)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :forced :force t) :to-be t)
+               (let ((condition (join-thread thread :timeout 2)))
+                 (expect condition :to-be-truthy)
+                 (expect (cl-concurrent-kit:operation-interrupted-reason condition) :to-be :forced))
+               (expect cleanup-finished :to-be nil)
+               (expect (cl-concurrent-kit:request-interruption saved :force t) :to-be nil))
+          (signal-semaphore release)))))
+
+  (it-each ((:error) (:throw))
+      "escapes when cleanup suppresses the original transfer with ~A"
+      (replacement)
+    (let ((ready (make-semaphore)) (resumed (make-semaphore))
+          (stop (make-semaphore)) saved)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (interruption-condition-of
+              (lambda ()
+                (cl-concurrent-kit:with-interruptible-scope (scope)
+                  (setf saved scope)
+                  (flet ((body ()
+                           (signal-semaphore ready)
+                           (loop until (wait-on-semaphore stop :timeout 0.1))))
+                    (ecase replacement
+                      (:error
+                       (handler-case (unwind-protect (body) (error "cleanup replaced interruption"))
+                         (simple-error () nil)))
+                      (:throw
+                       (catch 'replacement
+                         (unwind-protect (body) (throw 'replacement :replaced)))))
+                    (signal-semaphore resumed)
+                    (loop until (wait-on-semaphore stop :timeout 0.1))))))))
+        (unwind-protect
+             (progn
+               (wait-or-fail ready "replacement target did not start")
+               (cl-concurrent-kit:request-interruption saved :reason :first)
+               (wait-or-fail resumed "cleanup did not replace the original transfer")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :ordinary) :to-be nil)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :forced :force t) :to-be t)
+               (let ((condition (join-thread thread :timeout 2)))
+                 (expect condition :to-be-truthy)
+                 (expect (cl-concurrent-kit:operation-interrupted-reason condition) :to-be :forced)))
+          (signal-semaphore stop)
+          (signal-semaphore stop)))))
+
+  (it "uses the latest accepted forced reason even before the first delivery"
+    (let ((ready (make-semaphore)) (release (make-semaphore)) saved)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (interruption-condition-of
+              (lambda ()
+                (cl-concurrent-kit:with-interruptible-scope (scope)
+                  (setf saved scope)
+                  (sb-sys:without-interrupts
+                    (signal-semaphore ready)
+                    (wait-or-fail release "pending-force target was not released"))
+                  (loop (sleep 0.1)))))))
+        (unwind-protect
+             (progn
+               (wait-or-fail ready "pending-force target did not start")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :normal) :to-be t)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :force-one :force t) :to-be t)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :force-two :force t) :to-be t)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :ordinary) :to-be nil)
+               (signal-semaphore release)
+               (expect (cl-concurrent-kit:operation-interrupted-reason
+                        (join-thread thread :timeout 2)) :to-be :force-two))
+          (signal-semaphore release)))))
+
+  (it "a forced first request also rejects a later ordinary request"
+    (let ((ready (make-semaphore)) (release (make-semaphore)) saved)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (interruption-condition-of
+              (lambda ()
+                (cl-concurrent-kit:with-interruptible-scope (scope)
+                  (setf saved scope)
+                  (sb-sys:without-interrupts
+                    (signal-semaphore ready)
+                    (wait-or-fail release "first-force target was not released"))
+                  (loop (sleep 0.1)))))))
+        (unwind-protect
+             (progn
+               (wait-or-fail ready "first-force target did not start")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :forced :force t) :to-be t)
+               (expect (cl-concurrent-kit:request-interruption saved :reason :ordinary) :to-be nil)
+               (signal-semaphore release)
+               (expect (cl-concurrent-kit:operation-interrupted-reason
+                        (join-thread thread :timeout 2)) :to-be :forced))
+          (signal-semaphore release)))))
+
+  (it-each ((:error) (:throw))
+      "an ordinary first request can replace a ~A exit during user cleanup"
+      (original)
+    (let ((cleaning (make-semaphore)) (release (make-semaphore)) saved)
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (interruption-condition-of
+              (lambda ()
+                (catch 'original
+                  (cl-concurrent-kit:with-interruptible-scope (scope)
+                    (setf saved scope)
+                    (unwind-protect
+                        (ecase original
+                          (:error (error "original body failure"))
+                          (:throw (throw 'original :original)))
+                      (signal-semaphore cleaning)
+                      (wait-on-semaphore release))))))))
+        (unwind-protect
+             (progn
+               (wait-or-fail cleaning "body exit did not reach user cleanup")
+               (expect (cl-concurrent-kit:request-interruption saved :reason :replacement) :to-be t)
+               (expect (cl-concurrent-kit:operation-interrupted-reason
+                        (join-thread thread :timeout 2)) :to-be :replacement))
+          (signal-semaphore release))))))
+
+
+(describe "POSIX interruption handler"
+  (it "uses a real signal and requests interruption as the handler's last action"
+    (let* ((source (asdf:system-source-file "cl-concurrent-kit"))
+           (child (asdf:system-relative-pathname "cl-concurrent-kit"
+                                                 "t/interruptible-signal-child.lisp"))
+           (process
+             (uiop:launch-program
+              (list (namestring sb-ext:*runtime-pathname*)
+                    "--noinform" "--no-sysinit" "--no-userinit" "--disable-debugger"
+                    "--script" (namestring child) (namestring source))
+              :input :stream :output :stream :error-output :output)))
+      (unwind-protect
+           (progn
+             ;; The existing 20s testcase deadline also bounds child startup.
+             (loop for line = (read-line (uiop:process-info-output process) nil nil)
+                   collect line into startup
+                   when (null line)
+                     do (error "POSIX child exited before readiness: ~{~A~%~}" startup)
+                   until (string= line "K2-POSIX-READY"))
+             (with-interruption-worker
+                 (thread
+                  (lambda ()
+                    (let ((output (uiop:slurp-stream-string (uiop:process-info-output process))))
+                      (values (uiop:wait-process process) output))))
+               (write-char #\g (uiop:process-info-input process))
+               (finish-output (uiop:process-info-input process))
+               (multiple-value-bind (exit output) (join-thread thread :timeout 2)
+                 (unless (zerop exit) (error "POSIX child failed: ~A" output))
+                 (expect exit :to-be 0)
+                 (expect (search "POSIX last-action interruption verified" output) :to-be-truthy))))
+        (when (uiop:process-alive-p process)
+          (uiop:terminate-process process :urgent t))
+        (close (uiop:process-info-input process) :abort t)
+        (close (uiop:process-info-output process) :abort t)
+        (uiop:wait-process process)))))
+
+
