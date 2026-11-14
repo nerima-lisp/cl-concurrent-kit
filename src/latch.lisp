@@ -127,6 +127,7 @@ signals BARRIER-BROKEN. Call RESET-BARRIER before BARRIER can be used again."
           (handler-case
               (with-lock-held
                   ((%barrier-lock barrier))
+                (when scope (check-cancelled scope))
                 (when (%barrier-broken-p barrier)
                   (error 'barrier-broken :barrier barrier))
                 (let ((generation (%barrier-generation barrier))
