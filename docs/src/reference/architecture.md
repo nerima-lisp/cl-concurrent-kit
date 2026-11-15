@@ -56,7 +56,8 @@ cleanup closes the scope under the same mutex used for request acceptance,
 before timer cleanup or draining. Every callback checks that lifetime before
 transferring control.
 
-Force can abandon blocked cleanup or retry after one replaced transfer. It
+While the boundary remains live, each force request can abandon blocked
+cleanup or retry a replaced transfer. Force
 cannot stop cleanup that repeatedly replaces every transfer
 with its own non-local exit or error.
 
