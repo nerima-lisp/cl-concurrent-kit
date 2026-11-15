@@ -177,4 +177,3 @@ and does nothing. This macro preserves the caller's interrupt policy. As with
 WITH-INTERRUPTIBLE-SCOPE, BODY must be safe to unwind asynchronously; for
 cooperative cancellation of resource-owning work, use WITH-TASK-SCOPE."
   `(%call-with-timeout ,duration (lambda () ,@body)))
-
