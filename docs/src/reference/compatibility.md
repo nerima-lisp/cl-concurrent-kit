@@ -15,8 +15,12 @@ uses [cl-host-kit](https://github.com/nerima-lisp/cl-host-kit) on SBCL.
 
 The implementation uses SBCL's native thread and synchronization facilities
 in `src/primitives.lisp`. Interruptible scopes and preemptive timeouts also
-use SBCL's interrupt and timer facilities. Porting to another Common Lisp
-implementation requires replacing these mechanisms.
+use `sb-thread:interrupt-thread`, `sb-sys` interrupt control, and `sb-ext`
+timers directly. Executors use `sb-ext:compare-and-swap` to claim or cancel
+tasks. Barrier waits in `src/latch.lisp` use `sb-sys:without-interrupts` and
+`sb-sys:with-local-interrupts` to protect arrival and cleanup state.
+Porting to another Common Lisp implementation requires replacing
+these mechanisms as well as the primitive wrappers.
 
 ## Platforms
 

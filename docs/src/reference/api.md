@@ -12,6 +12,23 @@ their `:TIMEOUT` straight through to SBCL and so still take a raw number of
 seconds, as does `OPERATION-TIMED-OUT-TIMEOUT`, which reports the elapsed
 deadline as an exact rational.
 
+## Clock
+
+| Symbol | Description |
+|---|---|
+| `*CLOCK*` | Special variable: a zero-argument function returning internal-time units. Defaults to `GET-INTERNAL-REAL-TIME`. Library deadline arithmetic uses this function. |
+
+Since v0.7.0, `*CLOCK*` holds a function. The default's monotonicity depends
+on the SBCL build: when `:OS-PROVIDES-CLOCK-GETTIME` is present in
+`SB-IMPL:+INTERNAL-FEATURES+`, SBCL uses `CLOCK_MONOTONIC` on macOS and
+`CLOCK_MONOTONIC_COARSE` on Linux. Tests can bind an advancing closure.
+
+[`WITH-TIMEOUT`](#preemptive-timeouts) captures the function at entry;
+rebinding `*CLOCK*` in its body does not change its deadline checks. A frozen
+clock can prevent expiry because early real-timer callbacks keep rearming.
+Advancing an injected clock does not wake the real timer or shorten a
+blocking wait. See the timeout section for callback and closure behavior.
+
 ## Threads
 
 | Symbol | Description |

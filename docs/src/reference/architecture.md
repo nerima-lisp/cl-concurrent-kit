@@ -21,7 +21,9 @@ mutexes, condition variables, semaphores, and atomic counters. Higher-level
 components use these wrappers for synchronization. `src/timeout.lisp` also
 uses `sb-sys` and `sb-ext` directly for interrupt control and timers, and
 `sb-thread:interrupt-thread` for delivery. `src/executor.lisp` directly uses
-`sb-ext:compare-and-swap` to claim or cancel tasks.
+`sb-ext:compare-and-swap` to claim or cancel tasks. Barrier waits in
+`src/latch.lisp` directly use `sb-sys:without-interrupts` and
+`sb-sys:with-local-interrupts` to protect arrival and cleanup state.
 
 `WITH-INTERRUPTIBLE-SCOPE` gives one invocation on the calling thread its own
 interruption target. A request queues a transfer directly to that scope's

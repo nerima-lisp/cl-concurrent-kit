@@ -54,7 +54,9 @@ The following behavior changes affect callers of earlier versions:
   `OPERATION-TIMED-OUT` is signaled at the boundary after unwinding.
 - `WITH-TIMEOUT` no longer provides a `CONTINUE` restart for expiry.
 - `WITH-TIMEOUT` captures the zero-argument `*CLOCK*` function at entry and
-  checks its deadline in internal-time units when the SBCL timer runs. An
+  checks its deadline in internal-time units when the SBCL timer runs.
+  In v0.7.0, rebinding `*CLOCK*` inside the body could change deadline
+  checks; v0.8.0 keeps using the entry clock despite such a rebind. An
   early callback rearms the timer for the remaining interval. Advancing an
   injected clock does not wake the real timer. Closed callbacks do nothing
   and cannot rearm it.
