@@ -119,15 +119,13 @@ WAIT-ON-SEMAPHORE."
 ;;; broadcasts meant for a different waiter) converges on the same deadline
 ;;; instead of restarting a fresh N-second wait on every iteration.
 (defvar *clock* (function get-internal-real-time)
-  "The zero-argument function used by deadline arithmetic. Since v0.7.0,
-*CLOCK* is a function whose default is GET-INTERNAL-REAL-TIME and whose values
-use INTERNAL-TIME-UNITS. Monotonicity depends on the SBCL build: when
-:OS-PROVIDES-CLOCK-GETTIME is present in SB-IMPL:+INTERNAL-FEATURES+, SBCL uses
-CLOCK_MONOTONIC on macOS and CLOCK_MONOTONIC_COARSE on Linux. Tests can bind a
-closure that advances the returned value. Real blocking waits -- CONDITION-WAIT,
-WAIT-ON-SEMAPHORE, SB-EXT:WITH-TIMEOUT -- do not consult this variable and
-cannot be sped up by advancing a bound clock; only deadline arithmetic uses
-it.")
+  "The zero-argument deadline clock, default GET-INTERNAL-REAL-TIME, in
+INTERNAL-TIME-UNITS. Since v0.7.0 it is a function. When SBCL lists
+:OS-PROVIDES-CLOCK-GETTIME in SB-IMPL:+INTERNAL-FEATURES+, its default uses
+CLOCK_MONOTONIC on macOS and CLOCK_MONOTONIC_COARSE on Linux. Tests may bind
+an advancing closure. Real waits do not consult it. WITH-TIMEOUT captures it
+on entry and checks its deadline on each real timer wakeup, rearming if early.
+Advancing a bound clock does not wake the timer or shorten a blocking wait.")
 (defun %deadline-from-timeout (timeout)
   "Return an absolute *CLOCK* value in internal-time units TIMEOUT seconds from now,
 or NIL if TIMEOUT is NIL (no deadline)."

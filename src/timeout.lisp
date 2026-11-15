@@ -116,13 +116,26 @@ operation, because enabling interrupts may deliver before the handler returns."
 (defun %call-with-timeout (duration thunk)
   (let ((seconds (and duration (cl-date-kit:duration-to-seconds duration))))
     (if (and seconds (plusp seconds))
-        ;; The boundary can receive an outer interruption before its thunk
-        ;; starts. Construct the unscheduled timer first so cleanup always
-        ;; owns a real timer, including along that entry path.
-        (let* (target
-               (timer (sb-ext:make-timer
-                       (lambda () (request-interruption target :reason :timeout))
-                       :thread (current-thread))))
+        (let* ((clock *clock*)
+               (deadline (let ((*clock* clock)) (%deadline-from-timeout seconds)))
+               (timer-active t)
+               target timer)
+          ;; Construct the unscheduled timer before opening the boundary: an
+          ;; outer interruption can unwind before the timeout thunk starts.
+          (setf timer
+                (sb-ext:make-timer
+                 (lambda ()
+                   (sb-sys:without-interrupts
+                     ;; A queued callback may outlive its closed boundary.
+                     ;; It must not consult the clock or rearm this timer.
+                     (when timer-active
+                       (let ((remaining
+                               (let ((*clock* clock))
+                                 (%seconds-until-deadline deadline))))
+                         (if (plusp remaining)
+                             (sb-ext:schedule-timer timer remaining)
+                             (request-interruption target :reason :timeout))))))
+                 :thread (current-thread)))
           (%call-with-interruptible-scope
            (lambda (scope)
              (setf target scope)
@@ -131,7 +144,9 @@ operation, because enabling interrupts may deliver before the handler returns."
            (lambda (scope reason)
              (declare (ignore scope reason))
              (error 'operation-timed-out :operation :with-timeout :timeout seconds))
-           (lambda () (sb-ext:unschedule-timer timer))))
+           (lambda ()
+             (setf timer-active nil)
+             (sb-ext:unschedule-timer timer))))
         (funcall thunk))))
 
 
@@ -147,6 +162,12 @@ signals OPERATION-TIMED-OUT and discards those values. With no prior delivery,
 a timer arriving after BODY has returned cannot change its successful result.
 DURATION is evaluated once; NIL, zero and negative durations run BODY without
 a deadline.
+
+The deadline uses the zero-argument *CLOCK* function captured on entry, in
+INTERNAL-TIME-UNITS. The real SBCL timer is only a wakeup: an early callback
+rearms for the time remaining on that clock. Advancing an injected clock does
+not itself wake the timer, and rebinding *CLOCK* inside BODY does not change
+this invocation's clock. A callback after closure does not consult the clock.
 
 Nested deadlines have independent targets. A direct SB-EXT:WITH-TIMEOUT in
 BODY keeps its own condition. WITHOUT-INTERRUPTS and GC may delay delivery.

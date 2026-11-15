@@ -467,4 +467,89 @@
         (close (uiop:process-info-output process) :abort t)
         (uiop:wait-process process)))))
 
+(describe-concurrent "WITH-TIMEOUT injectable clock"
+  (it "rearms an early timer and expires after the bound clock advances"
+    (let ((early (make-semaphore))
+          (reached-early nil)
+          (clock-calls 0))
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (let ((now 100))
+               (let ((cl-concurrent-kit:*clock*
+                       (lambda ()
+                         (when (= (incf clock-calls) 2)
+                           (signal-semaphore early))
+                         now)))
+                 (with-timeout +test-timeout-expiry+
+                   (setf reached-early (wait-on-semaphore early :timeout 1))
+                   (incf now internal-time-units-per-second)
+                   (sleep 5))))))
+        (let ((condition (join-thread thread :timeout 2)))
+          (expect reached-early :to-be-truthy)
+          (expect (>= clock-calls 3) :to-be t)
+          (expect (typep condition 'operation-timed-out) :to-be t)
+          (expect (operation-timed-out-timeout condition) :to-be 1/20)))))
 
+  (it "keeps the entry clock when the body rebinds the special variable"
+    (let ((entry-calls 0)
+          (body-clock-calls 0))
+      (with-interruption-worker
+          (thread
+           (lambda ()
+             (let ((cl-concurrent-kit:*clock*
+                     (lambda ()
+                       (* (incf entry-calls) internal-time-units-per-second))))
+               (with-timeout +test-timeout-expiry+
+                 (let ((cl-concurrent-kit:*clock*
+                         (lambda ()
+                           (incf body-clock-calls)
+                           (error "The timeout used the body's clock."))))
+                   (loop (sleep 0.1)))))))
+        (let ((condition (join-thread thread :timeout 2)))
+          (expect (>= entry-calls 2) :to-be t)
+          (expect body-clock-calls :to-be 0)
+          (expect (typep condition 'operation-timed-out) :to-be t)))))
+
+  (it "does not read the clock or rearm a callback after closure"
+    (with-interruption-worker
+        (thread
+         (lambda ()
+           (let ((clock-calls 0)
+                 (before (sb-ext:list-all-timers))
+                 timer callback)
+             (let ((cl-concurrent-kit:*clock*
+                     (lambda () (incf clock-calls) 100)))
+               (with-timeout (cl-date-kit:duration-of-seconds 5)
+                 ;; SBCL has no public callback/thread readers. Retain this
+                 ;; actual timer callback to exercise a late invocation.
+                 (setf timer
+                       (find-if
+                        (lambda (candidate)
+                          (and (not (member candidate before))
+                               (eq (sb-impl::%timer-thread candidate)
+                                   (current-thread))))
+                        (sb-ext:list-all-timers))
+                       callback (sb-impl::%timer-function timer))))
+             (let ((calls-before clock-calls))
+               (funcall callback)
+               (values calls-before clock-calls
+                       (sb-ext:timer-scheduled-p timer))))))
+      (multiple-value-bind (before after scheduled) (join-thread thread :timeout 2)
+        (expect before :to-be 1)
+        (expect after :to-be before)
+        (expect scheduled :to-be nil)))))
+
+(describe-concurrent "interruptible scope barrier cancellation"
+  (it "preserves cancellation before barrier arrival inside an interruptible scope"
+    (let ((barrier (make-barrier 2))
+          (task-scope (cl-concurrent-kit::%make-task-scope)))
+      (cl-concurrent-kit::%scope-cancel task-scope)
+      (cl-concurrent-kit:with-interruptible-scope (target)
+        (declare (ignore target))
+        (signals task-cancelled
+          (await-barrier barrier :timeout +test-timeout+ :scope task-scope)))
+      (expect (barrier-broken-p barrier) :to-be-truthy)
+      (expect (barrier-number-waiting barrier) :to-be 0)
+      (signals barrier-broken
+        (await-barrier barrier :timeout +test-timeout+)))))
