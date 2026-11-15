@@ -1,94 +1,181 @@
 ;;;; src/timeout.lisp
 ;;;;
-;;;; The one PREEMPTIVE deadline in this library. Every other :TIMEOUT here
-;;;; bounds a wait this library implements itself -- a CONDITION-WAIT inside
-;;;; %WAIT-UNTIL, a semaphore inside SELECT -- and such a deadline is enforced
-;;;; simply by declining to wait any longer. An arbitrary body is the case
-;;;; that shape cannot reach: it may be computing, or blocked in a read this
-;;;; library never sees, and nothing it does is under our control.
+;;;; Preemptive interruption and deadlines share one lifetime protocol.
+;;;; Requests target an opaque scope object, implemented as a closure over
+;;;; the target thread, its live state, and a mutex. Checking that state
+;;;; and enqueueing an interrupt are one serialized operation. Closing the
+;;;; scope uses the same mutex, then drains queued callbacks while they can
+;;;; still see the live boundary but can no longer leave it.
 ;;;;
-;;;; SBCL does ship the missing mechanism. SB-EXT:WITH-TIMEOUT schedules a
-;;;; timer that interrupts the running thread, so an arbitrary body really can
-;;;; be bounded. What it does not do is speak this library's vocabulary: it
-;;;; signals SB-EXT:TIMEOUT, which is a SERIOUS-CONDITION but deliberately NOT
-;;;; an ERROR, so neither a caller's own (HANDLER-CASE ... (ERROR ...)) nor
-;;;; the (HANDLER-CASE ... (CL-CONCURRENT-KIT-ERROR ...)) this library
-;;;; promises catches it. This file is the translation that keeps SB-EXT out
-;;;; of callers' handler clauses entirely.
+;;;; An interrupt transfers control without signaling inside user code.
+;;;; The boundary reports the interruption after user cleanup has unwound.
+;;;; All state transitions run without interrupts so a signal handler cannot
+;;;; request a scope while its target holds that scope's mutex. A request
+;;;; from a handler must be its last operation: delivery can precede return.
+;;;; Ordinary requests are accepted once; forced requests can retry during
+;;;; user cleanup. Only reaching this boundary's own cleanup closes it.
+;;;; WITH-TIMEOUT adds a timer and uses exactly this same protocol.
 (in-package #:cl-concurrent-kit)
 
+(%define-kit-condition operation-interrupted
+    ((scope "The interruptible scope that received the request.")
+     (reason "The first accepted reason, replaced by each accepted forced reason."))
+  ("Operation interrupted: ~S." (operation-interrupted-reason condition))
+  "Signaled at an interruptible scope boundary after its body has unwound.")
+
+(defun %call-with-interruptible-scope (thunk interrupted &optional (cleanup #'values))
+  (let ((thread (current-thread))
+        (lock (make-lock))
+        (live t)
+        (requested nil)
+        (delivered nil)
+        (reason nil)
+        scope)
+    (multiple-value-prog1
+        (block boundary
+          (sb-sys:without-interrupts
+            (setf scope
+                  (lambda (requested-reason force)
+                    (sb-sys:without-interrupts
+                      (with-lock-held (lock)
+                        (when (and live (or force (not requested)))
+                          ;; Acceptance and enqueue share the closing lock.
+                          ;; A forced request supersedes the previously accepted
+                          ;; reason even when that earlier callback is pending.
+                          (setf requested t reason requested-reason)
+                          (sb-thread:interrupt-thread
+                           thread
+                           (lambda ()
+                             (sb-sys:without-interrupts
+                               (when (with-lock-held (lock)
+                                       (when live (setf delivered t)))
+                                 ;; Keep the target live during user cleanup.
+                                 ;; FORCE can retry if cleanup blocks or replaces
+                                 ;; this transfer and resumes the body.
+                                 (return-from boundary (values))))))
+                          t)))))
+            (unwind-protect
+                (sb-sys:with-local-interrupts (funcall thunk scope))
+              ;; This is the boundary's cleanup, reached only after the thunk
+              ;; returns or its user cleanup finishes. Close before our own
+              ;; cleanup so even FORCE cannot change a completed result.
+              (with-lock-held (lock) (setf live nil))
+              (unwind-protect (funcall cleanup)
+                ;; Callback enqueue completed under the closing lock. When the
+                ;; caller allows interrupts, drain the now-inert callbacks here.
+                (sb-sys:with-local-interrupts nil)))))
+      (when delivered
+        (funcall interrupted scope reason)))))
+
+
+(defmacro with-interruptible-scope ((scope) &body body)
+  "Run BODY in the current thread, binding SCOPE to its interruption target.
+An accepted request queues a direct transfer to this boundary. Handlers inside
+BODY do not observe OPERATION-INTERRUPTED, which is signaled at the boundary.
+User cleanup can replace the transfer or block it; a forced request can cut
+blocked cleanup short or retry after one replacement while the boundary is live.
+It cannot stop cleanup that repeatedly replaces every transfer with its own
+non-local exit or error. For example, BODY can keep running this loop:
+  (loop (block r (unwind-protect (sleep 0.1) (return-from r))))
+A request during BODY's error or THROW cleanup can replace that pending exit.
+
+Normal return preserves all values only if no request has been delivered.
+If cleanup replaces a delivered transfer and BODY resumes and returns normally,
+the boundary still signals OPERATION-INTERRUPTED and discards those values.
+If the replacement exits this boundary instead, it closes and later requests
+do nothing.
+
+The boundary closes before its own cleanup. Acceptance alone does not prove
+delivery: a queued callback can lose the race to closing and become inert.
+WITHOUT-INTERRUPTS and GC can delay delivery. A caller prohibiting interrupts
+also delays physical draining until it reenables them; the closed callbacks
+remain inert. BODY must be safe to unwind asynchronously."
+  `(%call-with-interruptible-scope
+    (lambda (,scope) ,@body)
+    (lambda (target reason)
+      (error 'operation-interrupted :scope target :reason reason))))
+
+
+(defun request-interruption (scope &key reason force)
+  "Request interruption of SCOPE with REASON, defaulting to NIL.
+Return NIL for a NIL or closed SCOPE. An ordinary request is accepted only
+once. With FORCE non-NIL, accept and enqueue again while the boundary is live,
+including during user cleanup or after cleanup has replaced an earlier
+transfer. FORCE can abandon blocked cleanup or retry after one replacement,
+but cannot stop cleanup that repeatedly replaces every transfer with its own
+non-local exit or error. Each accepted forced request replaces the reason;
+the latest accepted forced reason is reported.
+
+T means accepted, not delivered: the boundary can close before a queued
+callback executes. FORCE neither reopens a closed boundary nor overrides the
+caller's interrupt prohibition. In a signal handler this call must be the last
+operation, because enabling interrupts may deliver before the handler returns."
+  (when scope (funcall scope reason force)))
+
+
 (defun %call-with-timeout (duration thunk)
-  "Implementation of WITH-TIMEOUT; see that macro for the contract."
   (let ((seconds (and duration (cl-date-kit:duration-to-seconds duration))))
     (if (and seconds (plusp seconds))
-        ;; The deadline is computed BEFORE SB-EXT:WITH-TIMEOUT schedules its
-        ;; timer, so it can only be earlier than the instant that timer fires,
-        ;; never later -- the comparison below therefore never rejects this
-        ;; call's own timeout over a rounding margin.
-        (let ((deadline (%deadline-from-timeout seconds))
-              (expired-p nil))
-          (multiple-value-prog1
-              (block attempt
-                (handler-bind
-                    ((sb-ext:timeout
-                       (lambda (condition)
-                         (declare (ignore condition))
-                         ;; Claim this SB-EXT:TIMEOUT only if this call's own
-                         ;; deadline has actually been reached. Anything earlier
-                         ;; belongs to a timeout the body established, and
-                         ;; declining lets it keep propagating to whoever did.
-                         (when (>= (funcall *clock*) deadline)
-                           (setf expired-p t)
-                           (return-from attempt (values))))))
-                  (sb-ext:with-timeout seconds (funcall thunk))))
-            ;; Signaled after the BLOCK above has unwound rather than from
-            ;; inside the handler: by then SB-EXT:WITH-TIMEOUT's own
-            ;; UNWIND-PROTECT has unscheduled the timer and the asynchronous
-            ;; interrupt's frames are gone, so a caller handling
-            ;; OPERATION-TIMED-OUT sees an ordinary stack.
-            (when expired-p
-              (error 'operation-timed-out :operation :with-timeout :timeout seconds))))
+        (let* ((clock *clock*)
+               (deadline (let ((*clock* clock)) (%deadline-from-timeout seconds)))
+               (timer-active t)
+               target timer)
+          ;; Construct the unscheduled timer before opening the boundary: an
+          ;; outer interruption can unwind before the timeout thunk starts.
+          (setf timer
+                (sb-ext:make-timer
+                 (lambda ()
+                   (sb-sys:without-interrupts
+                     ;; A queued callback may outlive its closed boundary.
+                     ;; It must not consult the clock or rearm this timer.
+                     (when timer-active
+                       (let ((remaining
+                               (let ((*clock* clock))
+                                 (%seconds-until-deadline deadline))))
+                         (if (plusp remaining)
+                             (sb-ext:schedule-timer timer remaining)
+                             (request-interruption target :reason :timeout))))))
+                 :thread (current-thread)))
+          (%call-with-interruptible-scope
+           (lambda (scope)
+             (setf target scope)
+             (sb-ext:schedule-timer timer seconds)
+             (funcall thunk))
+           (lambda (scope reason)
+             (declare (ignore scope reason))
+             (error 'operation-timed-out :operation :with-timeout :timeout seconds))
+           (lambda ()
+             (setf timer-active nil)
+             (sb-ext:unschedule-timer timer))))
         (funcall thunk))))
 
+
+
 (defmacro with-timeout (duration &body body)
-  "Run BODY under a preemptive deadline of DURATION (a CL-DATE-KIT:DURATION),
-returning its values. If BODY has not finished by then it is interrupted and
-OPERATION-TIMED-OUT is signaled, naming :WITH-TIMEOUT as the operation.
+  "Run BODY under a preemptive deadline of DURATION (a CL-DATE-KIT:DURATION).
+Return all values on normal completion only if no timeout request was delivered.
+On expiry, transfer control directly to the boundary, unwind BODY, then signal
+OPERATION-TIMED-OUT with operation :WITH-TIMEOUT and the timeout in seconds.
+Handlers inside BODY do not observe this condition. If cleanup replaces a
+delivered transfer and BODY resumes and returns normally, the boundary still
+signals OPERATION-TIMED-OUT and discards those values. With no prior delivery,
+a timer arriving after BODY has returned cannot change its successful result.
+DURATION is evaluated once; NIL, zero and negative durations run BODY without
+a deadline.
 
-DURATION NIL, or a zero or negative-length duration, means no deadline at
-all: BODY simply runs. Zero and negative match SB-EXT:WITH-TIMEOUT, which
-schedules no timer unless its own seconds argument is strictly positive -- a
-zero-length deadline that fired immediately would leave (WITH-TIMEOUT
-(CL-DATE-KIT:DURATION-ZERO) ...) unable to run anything. NIL is this macro's
-own addition, so a caller holding a timeout variable that is NIL for \"no
-limit\" can pass it straight through, exactly as AWAIT, RECV, SEND and SELECT
-already accept a NIL :TIMEOUT.
+The deadline uses the zero-argument *CLOCK* function captured on entry, in
+INTERNAL-TIME-UNITS. The real SBCL timer is only a wakeup: an early callback
+rearms for the time remaining on that clock. Advancing an injected clock does
+not itself wake the timer, and rebinding *CLOCK* inside BODY does not change
+this invocation's clock. A callback after closure does not consult the clock.
+Each timer wakeup rechecks the entry-captured clock, so binding a clock that
+does not advance prevents this timeout from interrupting BODY.
 
-PREEMPTIVE, and how that differs from a scope. This macro interrupts BODY
-wherever it happens to be, through SBCL's timer and SB-THREAD:INTERRUPT-THREAD.
-WITH-TASK-SCOPE's cancellation is the opposite -- COOPERATIVE, reaching a task
-only where that task calls CHECK-CANCELLED -- and that is a deliberate design
-position rather than a missing feature (see src/scope.lisp): an asynchronous
-interrupt can unwind BODY between any two instructions, so an UNWIND-PROTECT
-inside BODY may be entered with its protected form only half finished.
-SB-EXT:WITH-TIMEOUT's own docstring works that hazard through in detail. Bound
-work that is safe to abandon at an arbitrary point with this macro; for work
-that owns a resource, prefer a scope and CHECK-CANCELLED.
-
-NESTING. A deadline established inside BODY -- by an inner WITH-TIMEOUT, or by
-a direct SB-EXT:WITH-TIMEOUT -- is never reported as this one's, and this
-one's is never reported as the inner one's. Each level claims an
-SB-EXT:TIMEOUT only once its own deadline has actually been reached and
-otherwise declines, so an inner expiry surfaces with the inner seconds and an
-outer expiry with the outer seconds, whichever form is written outermost. Two
-deadlines expiring in the same instant are genuinely indistinguishable, and
-there the innermost claims it.
-
-TELLING TWO DEADLINES APART. WITH-TASK-SCOPE's own :TIMEOUT signals this very
-same OPERATION-TIMED-OUT, naming :WITH-TASK-SCOPE instead. A handler wrapping
-a scope whose body contains a WITH-TIMEOUT therefore sees one condition type
-standing for two different expiries, and must read
-OPERATION-TIMED-OUT-OPERATION -- not the condition's class -- to tell which
-fired. That is deliberate: every deadline in this library reports through the
-one condition type, and the operation slot is how they are discriminated."
+Nested deadlines have independent targets. A direct SB-EXT:WITH-TIMEOUT in
+BODY keeps its own condition. WITHOUT-INTERRUPTS and GC may delay delivery.
+If the caller prohibits interrupts throughout this scope, BODY can complete
+without the deadline firing; its delayed callback then sees a closed scope
+and does nothing. This macro preserves the caller's interrupt policy. As with
+WITH-INTERRUPTIBLE-SCOPE, BODY must be safe to unwind asynchronously; for
+cooperative cancellation of resource-owning work, use WITH-TASK-SCOPE."
   `(%call-with-timeout ,duration (lambda () ,@body)))

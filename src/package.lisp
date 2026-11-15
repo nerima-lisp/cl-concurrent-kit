@@ -179,7 +179,14 @@
    #:promise-all-failed-causes
    #:executor-queue-full
    #:executor-queue-full-executor
-   #:executor-queue-full-capacity))
+   #:executor-queue-full-capacity
+
+   ;; Interruptible scopes
+   #:with-interruptible-scope
+   #:request-interruption
+   #:operation-interrupted
+   #:operation-interrupted-scope
+   #:operation-interrupted-reason))
 
 ;; This file used to carry a global (DECLAIM (OPTIMIZE (SPEED 0) ...)) here.
 ;; It has moved to cl-concurrent-kit.asd's :AROUND-COMPILE, whose comment

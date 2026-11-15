@@ -37,11 +37,12 @@ cl-concurrent-kit is five layers, each built only on the ones below it:
 
 Three further pieces build on those five:
 
-- **Preemptive timeouts** (`src/timeout.lisp`) -- `WITH-TIMEOUT`, the one
-  deadline here that bounds an *arbitrary* body rather than a wait that this
-  library implements itself, by interrupting the running thread. The
-  counterpart to structured concurrency's cooperative
-  cancellation, not a replacement for it.
+- **Interruptible scopes and preemptive timeouts** (`src/timeout.lisp`) --
+  `WITH-INTERRUPTIBLE-SCOPE` exposes a target for `REQUEST-INTERRUPTION` to
+  interrupt an arbitrary body on the calling thread. `WITH-TIMEOUT` adds a
+  clock deadline to that boundary. See the
+  [API reference](reference/api.md#interruptible-scopes) for cleanup and
+  delivery limits alongside structured concurrency's cooperative cancellation.
 - **Countdown latches and barriers** (`src/latch.lisp`) -- `COUNTDOWN-LATCH`
   and `BARRIER`, both able to take an optional `WITH-TASK-SCOPE` `:SCOPE` so
   a blocked wait unblocks on cancellation the same way `AWAIT` does.

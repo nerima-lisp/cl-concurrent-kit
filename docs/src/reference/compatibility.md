@@ -14,9 +14,13 @@ Benchmark scripts use [cl-cli](https://github.com/nerima-lisp/cl-cli), which
 uses [cl-host-kit](https://github.com/nerima-lisp/cl-host-kit) on SBCL.
 
 The implementation uses SBCL's native thread and synchronization facilities
-in `src/primitives.lisp`. Porting to another Common Lisp implementation
-requires replacing that layer; the higher-level components do not reference
-`sb-*` packages directly.
+in `src/primitives.lisp`. Interruptible scopes and preemptive timeouts also
+use `sb-thread:interrupt-thread`, `sb-sys` interrupt control, and `sb-ext`
+timers directly. Executors use `sb-ext:compare-and-swap` to claim or cancel
+tasks. Barrier waits in `src/latch.lisp` use `sb-sys:without-interrupts` and
+`sb-sys:with-local-interrupts` to protect arrival and cleanup state.
+Porting to another Common Lisp implementation requires replacing
+these mechanisms as well as the primitive wrappers.
 
 ## Platforms
 
@@ -41,8 +45,12 @@ repository's normal `nix flake check` gate.
   is not part of the API.
 - Executors own worker threads until `shutdown-executor` is called.
 - Cancellation through `check-cancelled` and `with-task-scope` is cooperative.
-  Use `with-timeout` when an operation must be interrupted preemptively; see
-  [Architecture](architecture.md#threading-primitives) and
-  [Architecture](architecture.md#task-scopes-and-cancellation).
+  `with-interruptible-scope` supports explicit preemptive interruption, and
+  `with-timeout` adds a deadline through the same mechanism. Body condition
+  handlers do not observe the boundary's condition; user cleanup can replace
+  the pending transfer. SBCL can defer delivery during
+  `without-interrupts` and garbage collection; safe resource cleanup still
+  depends on the caller's protection of acquisition and cleanup-state updates.
+  See [API reference](api.md#interruptible-scopes).
 - Objects are scoped to one SBCL image and are not serializable across
   processes or machines.

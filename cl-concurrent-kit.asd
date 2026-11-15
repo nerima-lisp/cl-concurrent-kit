@@ -22,7 +22,7 @@ the internal-time values used by deadline arithmetic."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.7.0"
+  :version "0.8.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")
@@ -68,7 +68,7 @@ the internal-time values used by deadline arithmetic."
   :author "takeokunn <bararararatty@gmail.com>"
   :maintainer "takeokunn <bararararatty@gmail.com>"
   :license "MIT"
-  :version "0.7.0"
+  :version "0.8.0"
   :homepage "https://github.com/nerima-lisp/cl-concurrent-kit"
   :bug-tracker "https://github.com/nerima-lisp/cl-concurrent-kit/issues"
   :source-control (:git "https://github.com/nerima-lisp/cl-concurrent-kit.git")
@@ -80,6 +80,7 @@ the internal-time values used by deadline arithmetic."
    (:file "conditions-test")
    (:file "primitives-test")
    (:file "timeout-test")
+   (:file "interruptible-test")
    (:file "promise-test")
    (:file "channel-test")
    (:file "select-test")

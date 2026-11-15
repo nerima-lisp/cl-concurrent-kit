@@ -118,46 +118,64 @@ arrival index (counting from 1) to every other caller.
 A TIMEOUT (a CL-DATE-KIT:DURATION) or a cancelled SCOPE breaks the current
 generation for every party and signals OPERATION-TIMED-OUT or TASK-CANCELLED
 respectively; every other party still waiting in that generation instead
-signals BARRIER-BROKEN. Call RESET-BARRIER before BARRIER can be used again."
+signals BARRIER-BROKEN. Leaving an arrived wait by a non-local exit also breaks
+that generation. Call RESET-BARRIER before BARRIER can be used again."
   (let ((timeout (and timeout (cl-date-kit:duration-to-seconds timeout))))
-    (let ((waker (and scope (%barrier-waker barrier))))
-      (when waker
-        (%scope-add-waker scope waker))
-      (unwind-protect
-          (handler-case
-              (with-lock-held
-                  ((%barrier-lock barrier))
-                (when scope (check-cancelled scope))
-                (when (%barrier-broken-p barrier)
-                  (error 'barrier-broken :barrier barrier))
-                (let ((generation (%barrier-generation barrier))
-                      (arrival-index (%barrier-waiting barrier)))
-                  (incf (%barrier-waiting barrier))
-                  (flet ((release-as-last-party ()
-                           (setf (%barrier-waiting barrier) 0)
-                           (incf (%barrier-generation barrier))
-                           (condition-broadcast (%barrier-condition-variable barrier))
-                           0)
-                         (wait-for-release ()
-                           (%with-deadline-wait (result (%barrier-condition-variable barrier)
-                                                 (%barrier-lock barrier)
-                                                 (%deadline-from-timeout timeout) timeout :await-barrier)
-                               (progn
-                                 (when scope (check-cancelled scope))
-                                 (cond
-                                   ((eql generation (%barrier-last-broken-generation barrier)) :broken)
-                                   ((/= generation (%barrier-generation barrier)) :advanced)))
-                             (ecase result
-                               (:broken (error 'barrier-broken :barrier barrier))
-                               (:advanced (1+ arrival-index))))))
-                    (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
-                        (release-as-last-party)
-                        (wait-for-release)))))
-            ((or task-cancelled operation-timed-out) (condition)
-              (with-lock-held ((%barrier-lock barrier)) (%break-barrier barrier))
-              (error condition)))
-        (when waker
-          (%scope-remove-waker scope waker))))))
+    (let ((waker (and scope (%barrier-waker barrier)))
+          generation)
+      (sb-sys:without-interrupts
+        (unwind-protect
+            (progn
+              (when waker
+                (%scope-add-waker scope waker))
+              (sb-sys:with-local-interrupts
+                (handler-case
+                    (with-lock-held ((%barrier-lock barrier))
+                      (when scope (check-cancelled scope))
+                      (when (%barrier-broken-p barrier)
+                        (error 'barrier-broken :barrier barrier))
+                      (let ((arrival-index (%barrier-waiting barrier)))
+                        (flet ((release-as-last-party ()
+                                 (sb-sys:without-interrupts
+                                   (setf (%barrier-waiting barrier) 0)
+                                   (incf (%barrier-generation barrier))
+                                   (condition-broadcast (%barrier-condition-variable barrier))
+                                   0))
+                               (wait-for-release ()
+                                 (%with-deadline-wait (result (%barrier-condition-variable barrier)
+                                                       (%barrier-lock barrier)
+                                                       (%deadline-from-timeout timeout) timeout :await-barrier)
+                                     (progn
+                                       (when scope (check-cancelled scope))
+                                       (cond
+                                         ((eql generation (%barrier-last-broken-generation barrier)) :broken)
+                                         ((/= generation (%barrier-generation barrier)) :advanced)))
+                                   (ecase result
+                                     (:broken (error 'barrier-broken :barrier barrier))
+                                     (:advanced (1+ arrival-index))))))
+                          (sb-sys:without-interrupts
+                            (setf generation (%barrier-generation barrier))
+                            (incf (%barrier-waiting barrier)))
+                          (if (= (%barrier-waiting barrier) (%barrier-parties barrier))
+                              (release-as-last-party)
+                              (wait-for-release)))))
+                  ((or task-cancelled operation-timed-out) (condition)
+                    (sb-sys:without-interrupts
+                      (with-lock-held ((%barrier-lock barrier))
+                        ;; Pre-arrival cancellation still breaks the current
+                        ;; generation; an old waiter must not break a newer one.
+                        (when (or (null generation)
+                                  (= generation (%barrier-generation barrier)))
+                          (%break-barrier barrier))))
+                    (error condition)))))
+          ;; CONDITION-WAIT can unwind without its mutex. The surrounding
+          ;; lock wrapper has unwound before this cleanup reacquires it.
+          (when generation
+            (with-lock-held ((%barrier-lock barrier))
+              (when (= generation (%barrier-generation barrier))
+                (%break-barrier barrier))))
+          (when waker
+            (%scope-remove-waker scope waker)))))))
 
 (defun reset-barrier (barrier)
   "Abandon BARRIER's current generation -- every party still waiting in it

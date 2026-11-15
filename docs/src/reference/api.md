@@ -12,6 +12,23 @@ their `:TIMEOUT` straight through to SBCL and so still take a raw number of
 seconds, as does `OPERATION-TIMED-OUT-TIMEOUT`, which reports the elapsed
 deadline as an exact rational.
 
+## Clock
+
+| Symbol | Description |
+|---|---|
+| `*CLOCK*` | Special variable: a zero-argument function returning internal-time units. Defaults to `GET-INTERNAL-REAL-TIME`. Library deadline arithmetic uses this function. |
+
+Since v0.7.0, `*CLOCK*` holds a function. The default's monotonicity depends
+on the SBCL build: when `:OS-PROVIDES-CLOCK-GETTIME` is present in
+`SB-IMPL:+INTERNAL-FEATURES+`, SBCL uses `CLOCK_MONOTONIC` on macOS and
+`CLOCK_MONOTONIC_COARSE` on Linux. Tests can bind an advancing closure.
+
+[`WITH-TIMEOUT`](#preemptive-timeouts) captures the function at entry;
+rebinding `*CLOCK*` in its body does not change its deadline checks. A frozen
+clock can prevent expiry because early real-timer callbacks keep rearming.
+Advancing an injected clock does not wake the real timer or shorten a
+blocking wait. See the timeout section for callback and closure behavior.
+
 ## Threads
 
 | Symbol | Description |
@@ -45,11 +62,120 @@ deadline as an exact rational.
 | `ATOMIC-COUNTER-VALUE` `(counter)` | Current value. |
 | `ATOMIC-COUNTER-INCF` / `ATOMIC-COUNTER-DECF` `(counter &optional delta)` | Atomic add/subtract. |
 
+## Interruptible scopes
+
+| Symbol | Description |
+|---|---|
+| `WITH-INTERRUPTIBLE-SCOPE` `((scope) &body body)` | Macro: bind `scope` to a fresh interruption target and run `body` on the calling thread. A normal return preserves its values if no request was delivered. A delivered interruption is reported as `OPERATION-INTERRUPTED` at the scope boundary. |
+| `REQUEST-INTERRUPTION` `(scope &key reason force)` | Queue interruption of this scope. `reason` and `force` default to `NIL`. Return `T` for an accepted request. Return `NIL` for a `NIL` scope, a closed scope, or a duplicate ordinary request. |
+| `OPERATION-INTERRUPTED-SCOPE` `(condition)` | The opaque scope object named by an `OPERATION-INTERRUPTED` condition. |
+| `OPERATION-INTERRUPTED-REASON` `(condition)` | The first accepted request's reason, replaced by the latest accepted force request's reason if any. Defaults to `NIL`. |
+
+Share the scope object with the thread that requests interruption. The request
+targets that invocation, so a retained object cannot interrupt a later scope
+on the same thread. Handle `OPERATION-INTERRUPTED` outside
+`WITH-INTERRUPTIBLE-SCOPE`.
+
+An ordinary request is accepted only before any request has been accepted
+for the scope. Its delivery starts unwinding user cleanup. Repeated ordinary
+requests have no effect, so they do not interrupt that cleanup again.
+
+With `:force t`, every request accepted while the boundary is live queues
+another interruption, even during an earlier interruption's cleanup. Delivery
+can cut short the remaining cleanup and transfer to the boundary again.
+Accepting a force request replaces the stored reason immediately. If the
+boundary reports an interruption, it uses the latest accepted force reason,
+even if that force callback did not run before the boundary closed.
+
+Returning `T` confirms acceptance, not delivery. If no request has yet been
+delivered, the body can still complete normally before delivery, including
+in the few instructions before boundary
+teardown. The wrapper closes the scope under the request lock before running
+its own cleanup. All requests after closure are ignored. With no prior
+delivery, a request cannot turn a completed result into an interruption. The scope drains queued
+callbacks when the caller permits interrupts.
+Nested scopes have separate targets; interrupting an outer scope unwinds
+through any inner scopes and their cleanup.
+
+A request on the target thread is queued too. In a real signal handler,
+`REQUEST-INTERRUPTION` must be the last action before returning. Enabling
+interrupts or performing interrupt-enabling work can deliver the queued
+interruption while the handler is still on the stack. Queueing alone does
+not guarantee that the handler returns before delivery.
+
+Interruption starts a direct transfer to the boundary. The body's
+`HANDLER-CASE`, `HANDLER-BIND`, and `IGNORE-ERRORS` do not observe
+`OPERATION-INTERRUPTED`, which is signaled only after control reaches the
+boundary. `UNWIND-PROTECT` cleanup runs during the transfer, and a delivered
+force request can interrupt its remainder.
+
+Cleanup can replace the pending transfer with its own `THROW` or error. If
+the body catches that replacement and resumes, the boundary stays live and
+a force request can retry the transfer. If the replacement exits the
+boundary, the scope closes and further requests do nothing.
+
+Force cannot stop cleanup that repeatedly replaces every
+transfer with its own non-local exit or error. This illustrative body fragment
+can keep running when its cleanup replaces each delivered transfer:
+
+```lisp
+(loop (block r (unwind-protect (sleep 0.1) (return-from r))))
+```
+
+This limit comes from asynchronous non-local exits; force does not bypass it.
+If an earlier request was delivered, cleanup replaced that transfer, and the
+body resumed and returned normally, the boundary still signals
+`OPERATION-INTERRUPTED` and discards those return values.
+
+If the body is already unwinding because of `THROW` or an error, an
+interruption delivered during its cleanup can replace that pending exit.
+
+SBCL can defer delivery during `WITHOUT-INTERRUPTS` and garbage collection.
+`:force t` does not override these delays.
+If an enclosing `WITHOUT-INTERRUPTS` prohibits interrupts throughout the
+scope, queued callbacks can remain pending after the scope returns. They run
+when the caller permits interrupts again, see the inactive scope, and do
+nothing. The scope does not override the caller's interrupt prohibition.
+
+An asynchronous exit can occur between resource acquisition and recording
+the state needed for cleanup. Protect those operations together with
+`WITHOUT-INTERRUPTS`, or use cooperative task-scope cancellation when the
+body cannot safely unwind at an arbitrary point.
+
 ## Preemptive timeouts
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry `body` is interrupted -- through SBCL's timer and `sb-thread:interrupt-thread` -- and `OPERATION-TIMED-OUT` is signaled with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline at all. This is the only *preemptive* deadline in the library; `WITH-TASK-SCOPE`'s cancellation is cooperative by design, and the two do not interchange -- see [Architecture](architecture.md#threading-primitives). |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` with a deadline of `duration`, a `cl-date-kit:duration`, measured by the captured `*CLOCK*` function. An SBCL timer schedules deadline checks. A delivered timeout transfers to the boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. A normal return preserves the body's values if no timeout was delivered. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
+
+The body's condition handlers do not observe `OPERATION-TIMED-OUT` from this
+boundary. Cleanup can still replace the pending transfer as described above.
+With no prior delivery, expiry during the scope's teardown cannot replace a
+completed result with a timeout. If cleanup replaces a delivered transfer and
+the body resumes and returns normally, the boundary still signals
+`OPERATION-TIMED-OUT` and discards those values. `WITH-TIMEOUT` uses the same interruption mechanism,
+including its caller-controlled delivery and draining, and has the same
+asynchronous-exit limitations as `WITH-INTERRUPTIBLE-SCOPE`.
+
+If the caller prohibits interrupts throughout the scope with
+`WITHOUT-INTERRUPTS`, the body can complete without the timeout ever firing.
+Any callback delivered after the scope closes does nothing. The macro
+preserves the caller's interrupt policy.
+
+`WITH-TIMEOUT` captures the zero-argument `*CLOCK*` function when called and
+computes one absolute deadline in internal-time units. Each SBCL timer callback
+checks that deadline using the captured function. If the deadline has not
+been reached, it rearms the timer for the remaining interval; otherwise it
+requests interruption. Callbacks delivered after closure do nothing and
+cannot rearm the timer.
+
+Advancing an injected clock does not wake or accelerate the real SBCL timer.
+The clock controls deadline arithmetic when a check runs. Plain
+`WITH-INTERRUPTIBLE-SCOPE` has no clock or deadline of its own.
+
+`WITH-TIMEOUT` does not signal `SB-EXT:TIMEOUT` inside the body:
+a body handler for `SERIOUS-CONDITION` cannot catch the expiry, and the macro
+does not provide a `CONTINUE` restart for it.
 
 Note the shape of `duration`: it is a bare form, as in `sb-ext:with-timeout`,
 not a one-element list as in `bordeaux-threads:with-timeout`. Write
@@ -140,7 +266,7 @@ not a one-element list as in `bordeaux-threads:with-timeout`. Write
 | `BARRIER-PARTIES` `(barrier)` | The fixed party count. |
 | `BARRIER-NUMBER-WAITING` `(barrier)` | A snapshot of arrivals in the current generation. |
 | `BARRIER-BROKEN-P` `(barrier)` | True once `barrier` rejects arrivals until `RESET-BARRIER`. |
-| `AWAIT-BARRIER` `(barrier &key timeout scope)` | Arrive and block for the rest of the current generation's parties; returns 0 to the last arrival, a positive index to the others. A timeout or cancelled `SCOPE` breaks the generation for everyone still waiting. |
+| `AWAIT-BARRIER` `(barrier &key timeout scope)` | Arrive and block for the rest of the current generation's parties; returns 0 to the last arrival, a positive index to the others. A timeout, cancelled `SCOPE`, or post-arrival non-local exit from an incomplete wait breaks that generation for everyone still waiting. |
 | `RESET-BARRIER` `(barrier)` | Abandon the current generation (its waiters see `BARRIER-BROKEN`) and permit a fresh one. |
 
 ## Reactive streams
@@ -189,6 +315,7 @@ contract (output ownership, closing, and completion promises).
 | Symbol | Base | Description |
 |---|---|---|
 | `CL-CONCURRENT-KIT-ERROR` | `ERROR` | Base condition for the whole library. |
+| `OPERATION-INTERRUPTED` | `CL-CONCURRENT-KIT-ERROR` | An interruptible body was interrupted. Readers: `OPERATION-INTERRUPTED-SCOPE` for the target scope, and `OPERATION-INTERRUPTED-REASON` for the supplied reason. Signaled only after control reaches the scope boundary. |
 | `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, scope cleanup, or a `WITH-TIMEOUT` body, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
 | `PROMISE-ALREADY-FULFILLED` | `CL-CONCURRENT-KIT-ERROR` | `DELIVER`/`DELIVER-ERROR`/`CANCEL-PROMISE` called on an already-settled promise. Reader: `PROMISE-ALREADY-FULFILLED-PROMISE`. |
 | `CHANNEL-CLOSED` | `CL-CONCURRENT-KIT-ERROR` | `SEND`/`TRY-SEND` after close. Reader: `CHANNEL-CLOSED-CHANNEL`. |
@@ -197,7 +324,7 @@ contract (output ownership, closing, and completion promises).
 | `TASK-CANCELLED` | `CL-CONCURRENT-KIT-ERROR` | Signaled by `CHECK-CANCELLED`, or by `AWAIT-LATCH`/`AWAIT-BARRIER` when their `:SCOPE` is cancelled. Reader: `TASK-CANCELLED-SCOPE`. |
 | `SCOPE-ERROR` | `CL-CONCURRENT-KIT-ERROR` | One or more `SPAWN`ed tasks failed. Reader: `SCOPE-ERROR-CAUSES`. |
 | `LATCH-COUNT-UNDERFLOW` | `CL-CONCURRENT-KIT-ERROR` | `COUNT-DOWN` would take a latch below zero. Readers: `LATCH-COUNT-UNDERFLOW-LATCH`, `LATCH-COUNT-UNDERFLOW-COUNT`, `LATCH-COUNT-UNDERFLOW-DECREMENT`. |
-| `BARRIER-BROKEN` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT-BARRIER` on a barrier broken by a timeout, a cancelled scope, or `RESET-BARRIER`. Reader: `BARRIER-BROKEN-BARRIER`. |
+| `BARRIER-BROKEN` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT-BARRIER` on a barrier broken by a timeout, a cancelled scope, a post-arrival non-local exit from an incomplete wait, or `RESET-BARRIER`. Reader: `BARRIER-BROKEN-BARRIER`. |
 | `PROMISE-CANCELLED` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT` on a promise `CANCEL-PROMISE` settled. Readers: `PROMISE-CANCELLED-PROMISE`, `PROMISE-CANCELLED-REASON`. |
 | `PROMISE-EMPTY-INPUT` | `CL-CONCURRENT-KIT-ERROR` | `PROMISE-ANY` (or `PROMISE-RACE`) called with no promises. Reader: `PROMISE-EMPTY-INPUT-OPERATION`. |
 | `PROMISE-ALL-FAILED` | `CL-CONCURRENT-KIT-ERROR` | `PROMISE-ANY` when every input failed. Reader: `PROMISE-ALL-FAILED-CAUSES`. |
