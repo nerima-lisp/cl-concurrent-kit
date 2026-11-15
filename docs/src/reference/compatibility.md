@@ -43,7 +43,8 @@ repository's normal `nix flake check` gate.
 - Cancellation through `check-cancelled` and `with-task-scope` is cooperative.
   `with-interruptible-scope` supports explicit preemptive interruption, and
   `with-timeout` adds a deadline through the same mechanism. Body condition
-  handlers cannot suppress these exits. SBCL can defer delivery during
+  handlers do not observe the boundary's condition; user cleanup can replace
+  the pending transfer. SBCL can defer delivery during
   `without-interrupts` and garbage collection; safe resource cleanup still
   depends on the caller's protection of acquisition and cleanup-state updates.
   See [API reference](api.md#interruptible-scopes).

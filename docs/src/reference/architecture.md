@@ -18,25 +18,40 @@ returned value to exercise deadline arithmetic.
 
 `src/primitives.lisp` defines the package's low-level protocol: threads,
 mutexes, condition variables, semaphores, and atomic counters. Higher-level
-code uses these wrappers instead of depending on implementation-specific
-objects throughout the rest of the system.
+components use these wrappers for synchronization. `src/timeout.lisp` also
+uses `sb-sys` and `sb-ext` directly for interrupt control and timers.
 
 `WITH-INTERRUPTIBLE-SCOPE` gives one invocation on the calling thread its own
 interruption target. A request queues a transfer directly to that scope's
 boundary. The transfer unwinds user cleanup without signaling a condition
-inside the body. Only the boundary signals `OPERATION-INTERRUPTED`, so body
-condition handlers cannot suppress the exit.
+inside the body. Only the boundary signals `OPERATION-INTERRUPTED`; body
+condition handlers do not observe that condition. User cleanup can replace
+the pending transfer with another non-local exit.
 
 Completion and delivery can race. Their observable outcomes are:
 
 | Ordering | Outcome |
 |---|---|
-| Delivery reaches the active body first | Unwind the body, run cleanup, then signal at the boundary. |
+| An ordinary request is delivered first | Unwind the body and user cleanup, then signal at the boundary. Repeated ordinary requests are ignored. |
 | The body returns before queued delivery | Preserve its return values and deactivate the scope so its queued callback cannot leave the boundary. |
-| A request arrives during scope teardown or after exit | Ignore the request. It cannot affect a later invocation on the same thread. |
-| Several requests reach one active scope | Accept the first reason and ignore later requests. |
-| A signal handler on the target thread requests interruption | Queue delivery until after the handler returns. |
+| A force request arrives during user cleanup | Accept and enqueue it while the boundary remains live. Delivery can abandon the remaining cleanup and transfer to the boundary again. |
+| Several force requests arrive before closure | Enqueue each accepted request; the latest accepted reason takes precedence if interruption is reported. |
+| The wrapper's own cleanup has started, or the scope has exited | Ignore ordinary and force requests. They cannot affect a later invocation on the same thread. |
+| The scope argument is `NIL` | Return `NIL` without requesting an interrupt. |
+| A signal handler on the target thread requests interruption | The request must be its last action. Queueing does not guarantee return before delivery; interrupt-enabling work can deliver while the handler is still on the stack. |
 | An outer scope is interrupted while an inner scope runs | Unwind the inner scope and its cleanup before reaching the outer boundary. |
+
+An interruption delivered while the body is unwinding from `THROW` or an
+error can replace that pending exit.
+
+The boundary remains live throughout user cleanup, including cleanup started
+by a prior interruption. Delivery records that interruption has started but
+does not close the scope. Ordinary requests deduplicate against every earlier
+accepted request, including a force request. Force requests can requeue while
+unwinding and update the shared reason when accepted. The wrapper's own
+cleanup closes the scope under the same mutex used for request acceptance,
+before timer cleanup or draining. Every callback checks that lifetime before
+transferring control.
 
 Teardown drains pending scope callbacks before returning when the caller
 permits interrupts. If the caller
@@ -44,16 +59,23 @@ encloses the entire scope in `WITHOUT-INTERRUPTS`, callbacks can remain pending
 until that enclosing prohibition ends. They then see an inactive scope and
 do nothing, even though the boundary has already exited.
 
-SBCL can also delay delivery during garbage collection. Callers must protect
+SBCL can also delay delivery during garbage collection. Force requests respect
+both delays. Callers must protect
 resource acquisition and the state needed for cleanup against arbitrary
 asynchronous exits.
 
 `WITH-TIMEOUT` uses this same boundary with a timer requesting interruption.
-It reports `OPERATION-TIMED-OUT` after unwinding. The readers
-`OPERATION-TIMED-OUT-OPERATION` and `OPERATION-TIMED-OUT-TIMEOUT` report the
-operation and timeout in seconds. A timer expiring during scope teardown
+It reports `OPERATION-TIMED-OUT` after unwinding.
+`OPERATION-TIMED-OUT-OPERATION` reports the operation identifier;
+`OPERATION-TIMED-OUT-TIMEOUT` reports the timeout in seconds.
+A timer expiring during scope teardown
 cannot replace a completed result. Other blocking operations enforce their deadline by
 returning from their wait and signaling the package's timeout condition.
+
+The timer requests a direct transfer to the boundary rather than signaling
+`SB-EXT:TIMEOUT` inside the body. A body handler for `SERIOUS-CONDITION`
+therefore cannot catch expiry, and `WITH-TIMEOUT` supplies no `CONTINUE`
+restart for it.
 
 ## Promises and executors
 

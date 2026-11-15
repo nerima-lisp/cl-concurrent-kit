@@ -50,32 +50,57 @@ deadline as an exact rational.
 | Symbol | Description |
 |---|---|
 | `WITH-INTERRUPTIBLE-SCOPE` `((scope) &body body)` | Macro: bind `scope` to a fresh interruption target and run `body` on the calling thread. Return the body's values on normal completion. An interruption unwinds the body and signals `OPERATION-INTERRUPTED` at the scope boundary. |
-| `REQUEST-INTERRUPTION` `(scope &key reason)` | Request interruption of this specific scope, with `reason` defaulting to `NIL`. Return `T` for the first accepted request, or `NIL` for a duplicate request or an inactive scope. |
+| `REQUEST-INTERRUPTION` `(scope &key reason force)` | Queue interruption of this scope. `reason` and `force` default to `NIL`. Return `T` for an accepted request. Return `NIL` for a `NIL` scope, a closed scope, or a duplicate ordinary request. |
 | `OPERATION-INTERRUPTED-SCOPE` `(condition)` | The opaque scope object named by an `OPERATION-INTERRUPTED` condition. |
-| `OPERATION-INTERRUPTED-REASON` `(condition)` | The first accepted request's reason, defaulting to `NIL`. |
+| `OPERATION-INTERRUPTED-REASON` `(condition)` | The first accepted request's reason, replaced by the latest accepted force request's reason if any. Defaults to `NIL`. |
 
 Share the scope object with the thread that requests interruption. The request
 targets that invocation, so a retained object cannot interrupt a later scope
 on the same thread. Handle `OPERATION-INTERRUPTED` outside
 `WITH-INTERRUPTIBLE-SCOPE`.
 
-Acceptance queues delivery; the body can still complete normally before
-that delivery. Once the body has finished, a request during the scope's
-teardown cannot change success
-into interruption. The scope deactivates before returning and drains its
-queued callbacks when the caller permits interrupts.
+An ordinary request is accepted only before any request has been accepted
+for the scope. Its delivery starts unwinding user cleanup. Repeated ordinary
+requests have no effect, so they do not interrupt that cleanup again.
+
+With `:force t`, every request accepted while the boundary is live queues
+another interruption, even during an earlier interruption's cleanup. Delivery
+can cut short the remaining cleanup and transfer to the boundary again.
+Accepting a force request replaces the stored reason immediately. If the
+boundary reports an interruption, it uses the latest accepted force reason,
+even if that force callback did not run before the boundary closed.
+
+Returning `T` confirms acceptance, not delivery. The body can still complete
+normally before delivery, including in the few instructions before boundary
+teardown. The wrapper closes the scope under the request lock before running
+its own cleanup. All requests after closure are ignored. A request cannot
+turn a completed result into an interruption. The scope drains queued
+callbacks when the caller permits interrupts.
 Nested scopes have separate targets; interrupting an outer scope unwinds
 through any inner scopes and their cleanup.
 
-A request on the target thread is queued too. If a signal handler requests
-interruption, delivery follows the handler's return.
+A request on the target thread is queued too. In a real signal handler,
+`REQUEST-INTERRUPTION` must be the last action before returning. Enabling
+interrupts or performing interrupt-enabling work can deliver the queued
+interruption while the handler is still on the stack. Queueing alone does
+not guarantee that the handler returns before delivery.
 
-Interruption transfers control directly to the boundary. The body's
-`HANDLER-CASE`, `HANDLER-BIND`, and `IGNORE-ERRORS` cannot intercept it;
-`UNWIND-PROTECT` cleanup still runs. The boundary signals the condition after
-unwinding.
+Interruption starts a direct transfer to the boundary. The body's
+`HANDLER-CASE`, `HANDLER-BIND`, and `IGNORE-ERRORS` do not observe
+`OPERATION-INTERRUPTED`, which is signaled only after control reaches the
+boundary. `UNWIND-PROTECT` cleanup runs during the transfer, and a delivered
+force request can interrupt its remainder.
+
+Cleanup can replace the pending transfer with its own `THROW` or error. If
+the body catches that replacement and resumes, the boundary stays live and
+a force request can retry the transfer. If the replacement exits the
+boundary, the scope closes and further requests do nothing.
+
+If the body is already unwinding because of `THROW` or an error, an
+interruption delivered during its cleanup can replace that pending exit.
 
 SBCL can defer delivery during `WITHOUT-INTERRUPTS` and garbage collection.
+`:force t` does not override these delays.
 If an enclosing `WITHOUT-INTERRUPTS` prohibits interrupts throughout the
 scope, queued callbacks can remain pending after the scope returns. They run
 when the caller permits interrupts again, see the inactive scope, and do
@@ -92,11 +117,17 @@ body cannot safely unwind at an arbitrary point.
 |---|---|
 | `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry the body unwinds to the interruption boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
 
-The body cannot suppress this timeout with condition handlers. Once the body
-has completed, expiry during the scope's teardown cannot replace its return
+The body's condition handlers do not observe `OPERATION-TIMED-OUT` from this
+boundary. Cleanup can still replace the pending transfer as described above.
+Once the body has completed, expiry during the scope's teardown cannot replace its return
 values with a timeout. `WITH-TIMEOUT` uses the same interruption mechanism,
 including its caller-controlled delivery and draining, and has the same
 asynchronous-exit limitations as `WITH-INTERRUPTIBLE-SCOPE`.
+
+`WITH-TIMEOUT` uses an SBCL timer and does not consult `*CLOCK*`. Unlike the
+earlier implementation, it does not signal `SB-EXT:TIMEOUT` inside the body:
+a body handler for `SERIOUS-CONDITION` cannot catch the expiry, and the macro
+does not provide a `CONTINUE` restart for it.
 
 Note the shape of `duration`: it is a bare form, as in `sb-ext:with-timeout`,
 not a one-element list as in `bordeaux-threads:with-timeout`. Write
@@ -236,7 +267,7 @@ contract (output ownership, closing, and completion promises).
 | Symbol | Base | Description |
 |---|---|---|
 | `CL-CONCURRENT-KIT-ERROR` | `ERROR` | Base condition for the whole library. |
-| `OPERATION-INTERRUPTED` | `CL-CONCURRENT-KIT-ERROR` | An interruptible body was interrupted. Readers: `OPERATION-INTERRUPTED-SCOPE` for the target scope, and `OPERATION-INTERRUPTED-REASON` for the supplied reason. Signaled at the scope boundary after body cleanup. |
+| `OPERATION-INTERRUPTED` | `CL-CONCURRENT-KIT-ERROR` | An interruptible body was interrupted. Readers: `OPERATION-INTERRUPTED-SCOPE` for the target scope, and `OPERATION-INTERRUPTED-REASON` for the supplied reason. Signaled only after control reaches the scope boundary. |
 | `OPERATION-TIMED-OUT` | `CL-CONCURRENT-KIT-ERROR` | A timeout-capable operation, including `AWAIT`, `SEND`, `RECV`, `SELECT`, executor shutdown, scope cleanup, or a `WITH-TIMEOUT` body, exhausted its deadline. Readers: `OPERATION-TIMED-OUT-OPERATION`, `OPERATION-TIMED-OUT-TIMEOUT`. |
 | `PROMISE-ALREADY-FULFILLED` | `CL-CONCURRENT-KIT-ERROR` | `DELIVER`/`DELIVER-ERROR`/`CANCEL-PROMISE` called on an already-settled promise. Reader: `PROMISE-ALREADY-FULFILLED-PROMISE`. |
 | `CHANNEL-CLOSED` | `CL-CONCURRENT-KIT-ERROR` | `SEND`/`TRY-SEND` after close. Reader: `CHANNEL-CLOSED-CHANNEL`. |
