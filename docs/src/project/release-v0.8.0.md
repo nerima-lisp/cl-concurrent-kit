@@ -66,6 +66,13 @@ The following behavior changes affect callers of earlier versions:
 
 ## Compatibility with v0.7.0
 
+In v0.8.0, a non-local exit, including interruption, from an arrived but
+incomplete `AWAIT-BARRIER` wait breaks that pending generation, resets its
+waiting count to zero, and wakes its peers with `BARRIER-BROKEN`. In v0.7.0,
+such an exit left the arrival counted without breaking the generation.
+A delayed exit from an older, already released generation does not break
+the newer generation.
+
 The v0.7.0 clock-function contract and pre-arrival barrier cancellation behavior
 are retained. `*CLOCK*` remains a zero-argument function returning internal-time
 units, defaulting to `GET-INTERNAL-REAL-TIME`. The new interruption API and

@@ -266,7 +266,7 @@ not a one-element list as in `bordeaux-threads:with-timeout`. Write
 | `BARRIER-PARTIES` `(barrier)` | The fixed party count. |
 | `BARRIER-NUMBER-WAITING` `(barrier)` | A snapshot of arrivals in the current generation. |
 | `BARRIER-BROKEN-P` `(barrier)` | True once `barrier` rejects arrivals until `RESET-BARRIER`. |
-| `AWAIT-BARRIER` `(barrier &key timeout scope)` | Arrive and block for the rest of the current generation's parties; returns 0 to the last arrival, a positive index to the others. A timeout or cancelled `SCOPE` breaks the generation for everyone still waiting. |
+| `AWAIT-BARRIER` `(barrier &key timeout scope)` | Arrive and block for the rest of the current generation's parties; returns 0 to the last arrival, a positive index to the others. A timeout, cancelled `SCOPE`, or post-arrival non-local exit from an incomplete wait breaks that generation for everyone still waiting. |
 | `RESET-BARRIER` `(barrier)` | Abandon the current generation (its waiters see `BARRIER-BROKEN`) and permit a fresh one. |
 
 ## Reactive streams
@@ -324,7 +324,7 @@ contract (output ownership, closing, and completion promises).
 | `TASK-CANCELLED` | `CL-CONCURRENT-KIT-ERROR` | Signaled by `CHECK-CANCELLED`, or by `AWAIT-LATCH`/`AWAIT-BARRIER` when their `:SCOPE` is cancelled. Reader: `TASK-CANCELLED-SCOPE`. |
 | `SCOPE-ERROR` | `CL-CONCURRENT-KIT-ERROR` | One or more `SPAWN`ed tasks failed. Reader: `SCOPE-ERROR-CAUSES`. |
 | `LATCH-COUNT-UNDERFLOW` | `CL-CONCURRENT-KIT-ERROR` | `COUNT-DOWN` would take a latch below zero. Readers: `LATCH-COUNT-UNDERFLOW-LATCH`, `LATCH-COUNT-UNDERFLOW-COUNT`, `LATCH-COUNT-UNDERFLOW-DECREMENT`. |
-| `BARRIER-BROKEN` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT-BARRIER` on a barrier broken by a timeout, a cancelled scope, or `RESET-BARRIER`. Reader: `BARRIER-BROKEN-BARRIER`. |
+| `BARRIER-BROKEN` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT-BARRIER` on a barrier broken by a timeout, a cancelled scope, a post-arrival non-local exit from an incomplete wait, or `RESET-BARRIER`. Reader: `BARRIER-BROKEN-BARRIER`. |
 | `PROMISE-CANCELLED` | `CL-CONCURRENT-KIT-ERROR` | `AWAIT` on a promise `CANCEL-PROMISE` settled. Readers: `PROMISE-CANCELLED-PROMISE`, `PROMISE-CANCELLED-REASON`. |
 | `PROMISE-EMPTY-INPUT` | `CL-CONCURRENT-KIT-ERROR` | `PROMISE-ANY` (or `PROMISE-RACE`) called with no promises. Reader: `PROMISE-EMPTY-INPUT-OPERATION`. |
 | `PROMISE-ALL-FAILED` | `CL-CONCURRENT-KIT-ERROR` | `PROMISE-ANY` when every input failed. Reader: `PROMISE-ALL-FAILED-CAUSES`. |
