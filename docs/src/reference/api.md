@@ -49,7 +49,7 @@ deadline as an exact rational.
 
 | Symbol | Description |
 |---|---|
-| `WITH-INTERRUPTIBLE-SCOPE` `((scope) &body body)` | Macro: bind `scope` to a fresh interruption target and run `body` on the calling thread. Return the body's values on normal completion. An interruption unwinds the body and signals `OPERATION-INTERRUPTED` at the scope boundary. |
+| `WITH-INTERRUPTIBLE-SCOPE` `((scope) &body body)` | Macro: bind `scope` to a fresh interruption target and run `body` on the calling thread. A normal return preserves its values if no request was delivered. A delivered interruption is reported as `OPERATION-INTERRUPTED` at the scope boundary. |
 | `REQUEST-INTERRUPTION` `(scope &key reason force)` | Queue interruption of this scope. `reason` and `force` default to `NIL`. Return `T` for an accepted request. Return `NIL` for a `NIL` scope, a closed scope, or a duplicate ordinary request. |
 | `OPERATION-INTERRUPTED-SCOPE` `(condition)` | The opaque scope object named by an `OPERATION-INTERRUPTED` condition. |
 | `OPERATION-INTERRUPTED-REASON` `(condition)` | The first accepted request's reason, replaced by the latest accepted force request's reason if any. Defaults to `NIL`. |
@@ -70,11 +70,12 @@ Accepting a force request replaces the stored reason immediately. If the
 boundary reports an interruption, it uses the latest accepted force reason,
 even if that force callback did not run before the boundary closed.
 
-Returning `T` confirms acceptance, not delivery. The body can still complete
-normally before delivery, including in the few instructions before boundary
+Returning `T` confirms acceptance, not delivery. If no request has yet been
+delivered, the body can still complete normally before delivery, including
+in the few instructions before boundary
 teardown. The wrapper closes the scope under the request lock before running
-its own cleanup. All requests after closure are ignored. A request cannot
-turn a completed result into an interruption. The scope drains queued
+its own cleanup. All requests after closure are ignored. With no prior
+delivery, a request cannot turn a completed result into an interruption. The scope drains queued
 callbacks when the caller permits interrupts.
 Nested scopes have separate targets; interrupting an outer scope unwinds
 through any inner scopes and their cleanup.
@@ -96,6 +97,19 @@ the body catches that replacement and resumes, the boundary stays live and
 a force request can retry the transfer. If the replacement exits the
 boundary, the scope closes and further requests do nothing.
 
+Force cannot stop cleanup that repeatedly replaces every
+transfer with its own non-local exit or error. This illustrative body fragment
+can keep running when its cleanup replaces each delivered transfer:
+
+```lisp
+(loop (block r (unwind-protect (sleep 0.1) (return-from r))))
+```
+
+This limit comes from asynchronous non-local exits; force does not bypass it.
+If an earlier request was delivered, cleanup replaced that transfer, and the
+body resumed and returned normally, the boundary still signals
+`OPERATION-INTERRUPTED` and discards those return values.
+
 If the body is already unwinding because of `THROW` or an error, an
 interruption delivered during its cleanup can replace that pending exit.
 
@@ -115,17 +129,24 @@ body cannot safely unwind at an arbitrary point.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` under a deadline of `duration`, a `cl-date-kit:duration`, returning its values. On expiry the body unwinds to the interruption boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` with an SBCL timer for `duration`, a `cl-date-kit:duration`. A delivered timeout transfers to the boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. A normal return preserves the body's values if no timeout was delivered. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
 
 The body's condition handlers do not observe `OPERATION-TIMED-OUT` from this
 boundary. Cleanup can still replace the pending transfer as described above.
-Once the body has completed, expiry during the scope's teardown cannot replace its return
-values with a timeout. `WITH-TIMEOUT` uses the same interruption mechanism,
+With no prior delivery, expiry during the scope's teardown cannot replace a
+completed result with a timeout. If cleanup replaces a delivered transfer and
+the body resumes and returns normally, the boundary still signals
+`OPERATION-TIMED-OUT` and discards those values. `WITH-TIMEOUT` uses the same interruption mechanism,
 including its caller-controlled delivery and draining, and has the same
 asynchronous-exit limitations as `WITH-INTERRUPTIBLE-SCOPE`.
 
-`WITH-TIMEOUT` uses an SBCL timer and does not consult `*CLOCK*`. Unlike the
-earlier implementation, it does not signal `SB-EXT:TIMEOUT` inside the body:
+If the caller prohibits interrupts throughout the scope with
+`WITHOUT-INTERRUPTS`, the body can complete without the timeout ever firing.
+Any callback delivered after the scope closes does nothing. The macro
+preserves the caller's interrupt policy.
+
+`WITH-TIMEOUT` uses an SBCL timer and does not consult `*CLOCK*`.
+It does not signal `SB-EXT:TIMEOUT` inside the body:
 a body handler for `SERIOUS-CONDITION` cannot catch the expiry, and the macro
 does not provide a `CONTINUE` restart for it.
 

@@ -70,12 +70,20 @@
 
 (defmacro with-interruptible-scope ((scope) &body body)
   "Run BODY in the current thread, binding SCOPE to its interruption target.
-An accepted request queues a direct transfer to this boundary. After BODY has
-unwound, signal OPERATION-INTERRUPTED with SCOPE and the accepted reason.
-Handlers inside BODY do not observe this condition. User cleanup can replace
-the transfer or block it; a forced request can cut that cleanup short and retry
-the transfer while the boundary is live. A request during BODY's error or THROW
-cleanup can replace that exit. Normal completion preserves all values.
+An accepted request queues a direct transfer to this boundary. Handlers inside
+BODY do not observe OPERATION-INTERRUPTED, which is signaled at the boundary.
+User cleanup can replace the transfer or block it; a forced request can cut
+blocked cleanup short or retry after one replacement while the boundary is live.
+It cannot stop cleanup that repeatedly replaces every transfer with its own
+non-local exit or error. For example, BODY can keep running this loop:
+  (loop (block r (unwind-protect (sleep 0.1) (return-from r))))
+A request during BODY's error or THROW cleanup can replace that pending exit.
+
+Normal return preserves all values only if no request has been delivered.
+If cleanup replaces a delivered transfer and BODY resumes and returns normally,
+the boundary still signals OPERATION-INTERRUPTED and discards those values.
+If the replacement exits this boundary instead, it closes and later requests
+do nothing.
 
 The boundary closes before its own cleanup. Acceptance alone does not prove
 delivery: a queued callback can lose the race to closing and become inert.
@@ -92,9 +100,11 @@ remain inert. BODY must be safe to unwind asynchronously."
   "Request interruption of SCOPE with REASON, defaulting to NIL.
 Return NIL for a NIL or closed SCOPE. An ordinary request is accepted only
 once. With FORCE non-NIL, accept and enqueue again while the boundary is live,
-including during user cleanup or after cleanup has suppressed an earlier
-transfer. FORCE can abandon remaining user cleanup. Each accepted forced
-request replaces the reason; the latest accepted forced reason is reported.
+including during user cleanup or after cleanup has replaced an earlier
+transfer. FORCE can abandon blocked cleanup or retry after one replacement,
+but cannot stop cleanup that repeatedly replaces every transfer with its own
+non-local exit or error. Each accepted forced request replaces the reason;
+the latest accepted forced reason is reported.
 
 T means accepted, not delivered: the boundary can close before a queued
 callback executes. FORCE neither reopens a closed boundary nor overrides the
@@ -128,16 +138,22 @@ operation, because enabling interrupts may deliver before the handler returns."
 
 (defmacro with-timeout (duration &body body)
   "Run BODY under a preemptive deadline of DURATION (a CL-DATE-KIT:DURATION).
-Return all values on normal completion. On expiry, transfer control directly
-to the boundary, unwind BODY, then signal OPERATION-TIMED-OUT with operation
-:WITH-TIMEOUT and the timeout in seconds. Handlers inside BODY do not observe
-this condition. A timer arriving after BODY has returned cannot change its
-successful result. DURATION is evaluated once; NIL, zero and negative durations
-run BODY without a deadline.
+Return all values on normal completion only if no timeout request was delivered.
+On expiry, transfer control directly to the boundary, unwind BODY, then signal
+OPERATION-TIMED-OUT with operation :WITH-TIMEOUT and the timeout in seconds.
+Handlers inside BODY do not observe this condition. If cleanup replaces a
+delivered transfer and BODY resumes and returns normally, the boundary still
+signals OPERATION-TIMED-OUT and discards those values. With no prior delivery,
+a timer arriving after BODY has returned cannot change its successful result.
+DURATION is evaluated once; NIL, zero and negative durations run BODY without
+a deadline.
 
 Nested deadlines have independent targets. A direct SB-EXT:WITH-TIMEOUT in
 BODY keeps its own condition. WITHOUT-INTERRUPTS and GC may delay delivery.
-As with WITH-INTERRUPTIBLE-SCOPE, BODY must be safe to unwind asynchronously;
-for cooperative cancellation of resource-owning work, use WITH-TASK-SCOPE."
+If the caller prohibits interrupts throughout this scope, BODY can complete
+without the deadline firing; its delayed callback then sees a closed scope
+and does nothing. This macro preserves the caller's interrupt policy. As with
+WITH-INTERRUPTIBLE-SCOPE, BODY must be safe to unwind asynchronously; for
+cooperative cancellation of resource-owning work, use WITH-TASK-SCOPE."
   `(%call-with-timeout ,duration (lambda () ,@body)))
 

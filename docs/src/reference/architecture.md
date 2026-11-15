@@ -19,7 +19,9 @@ returned value to exercise deadline arithmetic.
 `src/primitives.lisp` defines the package's low-level protocol: threads,
 mutexes, condition variables, semaphores, and atomic counters. Higher-level
 components use these wrappers for synchronization. `src/timeout.lisp` also
-uses `sb-sys` and `sb-ext` directly for interrupt control and timers.
+uses `sb-sys` and `sb-ext` directly for interrupt control and timers, and
+`sb-thread:interrupt-thread` for delivery. `src/executor.lisp` directly uses
+`sb-ext:compare-and-swap` to claim or cancel tasks.
 
 `WITH-INTERRUPTIBLE-SCOPE` gives one invocation on the calling thread its own
 interruption target. A request queues a transfer directly to that scope's
@@ -33,7 +35,8 @@ Completion and delivery can race. Their observable outcomes are:
 | Ordering | Outcome |
 |---|---|
 | An ordinary request is delivered first | Unwind the body and user cleanup, then signal at the boundary. Repeated ordinary requests are ignored. |
-| The body returns before queued delivery | Preserve its return values and deactivate the scope so its queued callback cannot leave the boundary. |
+| The body returns before any request is delivered | Preserve its return values and deactivate the scope so its queued callback cannot leave the boundary. |
+| A delivered transfer is replaced by cleanup, then the body resumes and returns normally | The recorded delivery still causes a boundary condition; discard the body's values. |
 | A force request arrives during user cleanup | Accept and enqueue it while the boundary remains live. Delivery can abandon the remaining cleanup and transfer to the boundary again. |
 | Several force requests arrive before closure | Enqueue each accepted request; the latest accepted reason takes precedence if interruption is reported. |
 | The wrapper's own cleanup has started, or the scope has exited | Ignore ordinary and force requests. They cannot affect a later invocation on the same thread. |
@@ -53,6 +56,10 @@ cleanup closes the scope under the same mutex used for request acceptance,
 before timer cleanup or draining. Every callback checks that lifetime before
 transferring control.
 
+Force can abandon blocked cleanup or retry after one replaced transfer. It
+cannot stop cleanup that repeatedly replaces every transfer
+with its own non-local exit or error.
+
 Teardown drains pending scope callbacks before returning when the caller
 permits interrupts. If the caller
 encloses the entire scope in `WITHOUT-INTERRUPTS`, callbacks can remain pending
@@ -68,8 +75,11 @@ asynchronous exits.
 It reports `OPERATION-TIMED-OUT` after unwinding.
 `OPERATION-TIMED-OUT-OPERATION` reports the operation identifier;
 `OPERATION-TIMED-OUT-TIMEOUT` reports the timeout in seconds.
-A timer expiring during scope teardown
-cannot replace a completed result. Other blocking operations enforce their deadline by
+A timer expiring during scope teardown cannot replace a completed result if
+no timeout was previously delivered. If the caller prohibits interrupts for
+the entire scope, the body can finish without the timeout firing at all.
+The timer callback then either stays cancelled or sees a closed target and
+does nothing when eventually delivered. Other blocking operations enforce their deadline by
 returning from their wait and signaling the package's timeout condition.
 
 The timer requests a direct transfer to the boundary rather than signaling
