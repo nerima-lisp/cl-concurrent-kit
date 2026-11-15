@@ -130,77 +130,80 @@
         let
           pkgs = nixpkgs.legacyPackages.${ctx.system};
         in
-        nixpkgs.lib.recursiveUpdate {
-          # Coverage report and check for this package's own sources.
-          packages.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
-          checks.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
+        nixpkgs.lib.recursiveUpdate
+          {
+            # Coverage report and check for this package's own sources.
+            packages.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
+            checks.coverage = ctx.cl.mkCoverageReport { drv = ctx.package; };
 
-          # Enforce the project's per-file coverage threshold.
-          checks.coverage-lcov =
-            pkgs.runCommand "cl-concurrent-kit-coverage-lcov"
-              {
-                nativeBuildInputs = [
-                  pkgs.sbcl
-                  pkgs.coreutils
-                  pkgs.perl
-                ];
-                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-                # The test system adds cl-weave to the library's runtime dependency.
-                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
-                  cl-date-kit.packages.${ctx.system}.cl-date-kit
-                }//";
-              }
-              ''
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME" "$out"
-                timeout --signal=KILL 600s sbcl --script ${coverageScript} "$out"
-                test -s "$out/html/cover-index.html"
-                perl ${coverageVerifier} "$out/lcov.info" ${self}
-              '';
-
-        }
-        # Benchmark tooling currently supports x86_64-linux only.
-        (nixpkgs.lib.optionalAttrs (ctx.system == "x86_64-linux") {
-          # Benchmark smoke test; SCALE 0.1 keeps the check short.
-          checks.benchmark =
-            pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
-              {
-                nativeBuildInputs = [
-                  pkgs.sbcl
-                  pkgs.coreutils
-                ];
-                CL_CONCURRENT_KIT_SOURCE_ROOT = self;
-                # The benchmark script loads these systems directly.
-                CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli}//:${cl-host-kit}//:${
-                  cl-date-kit.packages.${ctx.system}.cl-date-kit
-                }//";
-              }
-              ''
-                export HOME="$TMPDIR/home"
-                mkdir -p "$HOME"
-                timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 0.1 > "$out"
-                test -s "$out"
-              '';
-
-          apps.benchmark = {
-            type = "app";
-            program =
-              (pkgs.writeShellApplication {
-                name = "cl-concurrent-kit-benchmark";
-                runtimeInputs = [
-                  pkgs.sbcl
-                  pkgs.coreutils
-                ];
-                text = ''
-                  export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
-                  export CL_SOURCE_REGISTRY="${
-                    cl-weave.packages.${ctx.system}.cl-weave
-                  }//:${cl-cli}//:${cl-host-kit}//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//"
-                  exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
+            # Enforce the project's per-file coverage threshold.
+            checks.coverage-lcov =
+              pkgs.runCommand "cl-concurrent-kit-coverage-lcov"
+                {
+                  nativeBuildInputs = [
+                    pkgs.sbcl
+                    pkgs.coreutils
+                    pkgs.perl
+                  ];
+                  CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+                  # The test system adds cl-weave to the library's runtime dependency.
+                  CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${
+                    cl-date-kit.packages.${ctx.system}.cl-date-kit
+                  }//";
+                }
+                ''
+                  export HOME="$TMPDIR/home"
+                  mkdir -p "$HOME" "$out"
+                  timeout --signal=KILL 600s sbcl --script ${coverageScript} "$out"
+                  test -s "$out/html/cover-index.html"
+                  perl ${coverageVerifier} "$out/lcov.info" ${self}
                 '';
-              })
-              + "/bin/cl-concurrent-kit-benchmark";
-          };
-        });
+
+          }
+          # Benchmark tooling currently supports x86_64-linux only.
+          (
+            nixpkgs.lib.optionalAttrs (ctx.system == "x86_64-linux") {
+              # Benchmark smoke test; SCALE 0.1 keeps the check short.
+              checks.benchmark =
+                pkgs.runCommand "cl-concurrent-kit-benchmark-smoke"
+                  {
+                    nativeBuildInputs = [
+                      pkgs.sbcl
+                      pkgs.coreutils
+                    ];
+                    CL_CONCURRENT_KIT_SOURCE_ROOT = self;
+                    # The benchmark script loads these systems directly.
+                    CL_SOURCE_REGISTRY = "${cl-weave.packages.${ctx.system}.cl-weave}//:${cl-cli}//:${cl-host-kit}//:${
+                      cl-date-kit.packages.${ctx.system}.cl-date-kit
+                    }//";
+                  }
+                  ''
+                    export HOME="$TMPDIR/home"
+                    mkdir -p "$HOME"
+                    timeout --signal=KILL 90s sbcl --script ${benchmarkScript} 0.1 > "$out"
+                    test -s "$out"
+                  '';
+
+              apps.benchmark = {
+                type = "app";
+                program =
+                  (pkgs.writeShellApplication {
+                    name = "cl-concurrent-kit-benchmark";
+                    runtimeInputs = [
+                      pkgs.sbcl
+                      pkgs.coreutils
+                    ];
+                    text = ''
+                      export CL_CONCURRENT_KIT_SOURCE_ROOT="${self}"
+                      export CL_SOURCE_REGISTRY="${
+                        cl-weave.packages.${ctx.system}.cl-weave
+                      }//:${cl-cli}//:${cl-host-kit}//:${cl-date-kit.packages.${ctx.system}.cl-date-kit}//"
+                      exec timeout --signal=KILL 120s sbcl --script ${benchmarkScript} "$@"
+                    '';
+                  })
+                  + "/bin/cl-concurrent-kit-benchmark";
+              };
+            }
+          );
     };
 }
