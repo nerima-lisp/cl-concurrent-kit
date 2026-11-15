@@ -72,7 +72,16 @@ both delays. Callers must protect
 resource acquisition and the state needed for cleanup against arbitrary
 asynchronous exits.
 
-`WITH-TIMEOUT` uses this same boundary with a timer requesting interruption.
+`WITH-TIMEOUT` captures the zero-argument `*CLOCK*` function at entry and
+computes one deadline in internal-time units. Its SBCL timer callback checks
+the captured clock and requests interruption only once that deadline is
+reached. An early callback rearms the timer for the remaining interval.
+The wrapper closes its timer lifetime before unscheduling it, so a delayed
+callback cannot rearm a timer after scope closure. Advancing an injected
+clock does not wake the actual SBCL timer; only a running deadline check
+observes the changed value. Plain interruptible scopes have no clock.
+
+The timeout uses the same interruption boundary as an explicit request.
 It reports `OPERATION-TIMED-OUT` after unwinding.
 `OPERATION-TIMED-OUT-OPERATION` reports the operation identifier;
 `OPERATION-TIMED-OUT-TIMEOUT` reports the timeout in seconds.

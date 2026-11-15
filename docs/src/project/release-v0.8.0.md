@@ -1,4 +1,4 @@
-# v0.7.0 release notes
+# v0.8.0 release notes
 
 ## Interruptible scopes
 
@@ -37,7 +37,7 @@ scope callbacks past scope return; those callbacks then do nothing.
 Force requests respect the same delivery delays.
 Callers must protect resource acquisition and cleanup-state updates against
 asynchronous exits. See the
-[API reference](https://github.com/nerima-lisp/cl-concurrent-kit/blob/v0.7.0/docs/src/reference/api.md#interruptible-scopes).
+[API reference](https://github.com/nerima-lisp/cl-concurrent-kit/blob/v0.8.0/docs/src/reference/api.md#interruptible-scopes).
 
 ## Timeout race fix
 
@@ -46,27 +46,25 @@ the scope's teardown cannot turn an already completed body into a timeout
 if no timeout was previously delivered. If cleanup replaced an earlier
 delivered transfer and the body resumed and returned normally, the boundary
 still signals `OPERATION-TIMED-OUT` and discards those return values.
-The body's handlers do not observe the boundary's `OPERATION-TIMED-OUT`
-condition. The macro retains its duration argument and condition type.
+The macro retains its duration argument and condition type.
 
 The following behavior changes affect callers of earlier versions:
 
 - A body handler for `SERIOUS-CONDITION` no longer catches the timeout;
   `OPERATION-TIMED-OUT` is signaled at the boundary after unwinding.
 - `WITH-TIMEOUT` no longer provides a `CONTINUE` restart for expiry.
-- `WITH-TIMEOUT` uses SBCL's timer and ignores `*CLOCK*`.
+- `WITH-TIMEOUT` captures the zero-argument `*CLOCK*` function at entry and
+  checks its deadline in internal-time units when the SBCL timer runs. An
+  early callback rearms the timer for the remaining interval. Advancing an
+  injected clock does not wake the real timer. Closed callbacks do nothing
+  and cannot rearm it.
 - If an enclosing `WITHOUT-INTERRUPTS` prohibits interrupts for the entire
   scope, the body can complete without the timeout ever firing. The macro
   preserves the caller's policy; callbacks delivered after closure do nothing.
 
-## Changes since v0.6.1 included in v0.7.0
+## Compatibility with v0.7.0
 
-The release also includes these previously unreleased commits already on `main`:
-
-| Commit | Change |
-|---|---|
-| `7971169` | Update documentation references to the renamed cl-prolog-kit and cl-dataflow-kit repositories. |
-| `b0ed408` | Merge the repository-name documentation update from PR #4. |
-| `f71a4aa` | Shorten implementation comments without changing executable forms. |
-| `f0d2404` | Shorten coverage and benchmark tooling comments and realign coverage exclusion locations after the comment edits. The excluded source lines and coverage thresholds are unchanged. |
-| `1e32037` | Refresh the architecture, compatibility, and introductory documentation and repair links to the architecture sections. |
+The v0.7.0 clock-function contract and pre-arrival barrier cancellation behavior
+are retained. `*CLOCK*` remains a zero-argument function returning internal-time
+units, defaulting to `GET-INTERNAL-REAL-TIME`. The new interruption API and
+timeout boundary behavior described above are the v0.8.0 additions.

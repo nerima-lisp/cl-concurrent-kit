@@ -129,7 +129,7 @@ body cannot safely unwind at an arbitrary point.
 
 | Symbol | Description |
 |---|---|
-| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` with an SBCL timer for `duration`, a `cl-date-kit:duration`. A delivered timeout transfers to the boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. A normal return preserves the body's values if no timeout was delivered. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
+| `WITH-TIMEOUT` `(duration &body body)` | Macro: run `body` with a deadline of `duration`, a `cl-date-kit:duration`, measured by the captured `*CLOCK*` function. An SBCL timer schedules deadline checks. A delivered timeout transfers to the boundary, which signals `OPERATION-TIMED-OUT` with `:OPERATION :WITH-TIMEOUT`. A normal return preserves the body's values if no timeout was delivered. `duration` `NIL`, or a zero or negative-length duration, means no deadline. |
 
 The body's condition handlers do not observe `OPERATION-TIMED-OUT` from this
 boundary. Cleanup can still replace the pending transfer as described above.
@@ -145,8 +145,18 @@ If the caller prohibits interrupts throughout the scope with
 Any callback delivered after the scope closes does nothing. The macro
 preserves the caller's interrupt policy.
 
-`WITH-TIMEOUT` uses an SBCL timer and does not consult `*CLOCK*`.
-It does not signal `SB-EXT:TIMEOUT` inside the body:
+`WITH-TIMEOUT` captures the zero-argument `*CLOCK*` function when called and
+computes one absolute deadline in internal-time units. Each SBCL timer callback
+checks that deadline using the captured function. If the deadline has not
+been reached, it rearms the timer for the remaining interval; otherwise it
+requests interruption. Callbacks delivered after closure do nothing and
+cannot rearm the timer.
+
+Advancing an injected clock does not wake or accelerate the real SBCL timer.
+The clock controls deadline arithmetic when a check runs. Plain
+`WITH-INTERRUPTIBLE-SCOPE` has no clock or deadline of its own.
+
+`WITH-TIMEOUT` does not signal `SB-EXT:TIMEOUT` inside the body:
 a body handler for `SERIOUS-CONDITION` cannot catch the expiry, and the macro
 does not provide a `CONTINUE` restart for it.
 
