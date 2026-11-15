@@ -168,6 +168,8 @@ INTERNAL-TIME-UNITS. The real SBCL timer is only a wakeup: an early callback
 rearms for the time remaining on that clock. Advancing an injected clock does
 not itself wake the timer, and rebinding *CLOCK* inside BODY does not change
 this invocation's clock. A callback after closure does not consult the clock.
+Each timer wakeup rechecks the entry-captured clock, so binding a clock that
+does not advance prevents this timeout from interrupting BODY.
 
 Nested deadlines have independent targets. A direct SB-EXT:WITH-TIMEOUT in
 BODY keeps its own condition. WITHOUT-INTERRUPTS and GC may delay delivery.

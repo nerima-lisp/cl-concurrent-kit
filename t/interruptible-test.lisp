@@ -553,3 +553,79 @@
       (expect (barrier-number-waiting barrier) :to-be 0)
       (signals barrier-broken
         (await-barrier barrier :timeout +test-timeout+)))))
+
+(describe-concurrent "interruptible barrier waits"
+  (it "breaks an interrupted generation and wakes its other waiter"
+    (let ((barrier (make-barrier 3))
+          (ready (make-semaphore))
+          target)
+      (with-interruption-worker
+          (sibling (lambda () (await-barrier barrier)))
+        (with-interruption-worker
+            (thread
+             (lambda ()
+               (cl-concurrent-kit:with-interruptible-scope (scope)
+                 (setf target scope)
+                 (signal-semaphore ready)
+                 (await-barrier barrier))))
+          (wait-or-fail ready "interruptible barrier waiter did not start")
+          (expect (loop repeat 1000
+                        when (= (barrier-number-waiting barrier) 2) return t
+                        do (sleep 0.001)
+                        finally (return nil)) :to-be t)
+          (expect (cl-concurrent-kit:request-interruption target :reason :barrier)
+                  :to-be t)
+          (expect (typep (join-thread thread :timeout 2)
+                         'cl-concurrent-kit:operation-interrupted) :to-be t)
+          (expect (barrier-number-waiting barrier) :to-be 0)
+          (expect (barrier-broken-p barrier) :to-be t)
+          (expect (typep (join-thread sibling :timeout 2) 'barrier-broken) :to-be t)
+          (signals barrier-broken (await-barrier barrier :timeout +test-timeout+))))))
+
+  (it "does not break a newer generation when an old waiter unwinds late"
+    (let ((barrier (make-barrier 2))
+          (ready (make-semaphore))
+          (paused (make-semaphore))
+          (resume (make-semaphore))
+          target)
+      (with-interruption-worker
+          (old-waiter
+           (lambda ()
+             (cl-concurrent-kit:with-interruptible-scope (scope)
+               (setf target scope)
+               (signal-semaphore ready)
+               (await-barrier barrier))))
+        (unwind-protect
+            (progn
+              (wait-or-fail ready "old barrier waiter did not start")
+              (expect (loop repeat 1000
+                            when (= (barrier-number-waiting barrier) 1) return t
+                            do (sleep 0.001)
+                            finally (return nil)) :to-be t)
+              ;; Holding the mutex ensures the paused waiter cannot own it.
+              ;; Finish its generation before requesting the old scope's exit.
+              (with-lock-held ((cl-concurrent-kit::%barrier-lock barrier))
+                (sb-thread:interrupt-thread
+                 old-waiter
+                 (lambda ()
+                   (signal-semaphore paused)
+                   (wait-on-semaphore resume :timeout 1)))
+                (wait-or-fail paused "old barrier waiter did not pause"))
+              (expect (await-barrier barrier :timeout +test-timeout+) :to-be 0)
+              (with-interruption-worker
+                  (new-waiter (lambda () (await-barrier barrier)))
+                (expect (loop repeat 1000
+                              when (= (barrier-number-waiting barrier) 1) return t
+                              do (sleep 0.001)
+                              finally (return nil)) :to-be t)
+                (expect (cl-concurrent-kit:request-interruption target :reason :late)
+                        :to-be t)
+                (signal-semaphore resume)
+                (expect (typep (join-thread old-waiter :timeout 2)
+                               'cl-concurrent-kit:operation-interrupted) :to-be t)
+                (expect (barrier-broken-p barrier) :to-be nil)
+                (expect (barrier-number-waiting barrier) :to-be 1)
+                (expect (await-barrier barrier :timeout +test-timeout+) :to-be 0)
+                (expect (join-thread new-waiter :timeout 2) :to-be 1)
+                (expect (barrier-number-waiting barrier) :to-be 0)))
+          (signal-semaphore resume))))))
